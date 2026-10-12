@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ролики — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Ролики</h1>
+        <p class="sub">Всё, что нашёл завод: категория от нейросети, статус и причина решения. Нажмите на карточку, чтобы посмотреть видео.</p>
+      </div>
+      <div class="row"><button class="btn" id="parseNow">↻ Парсить</button><button class="btn primary lg" id="autoCircle" hidden>🔵 Автозалив в кружке</button></div>
+    </div>
+
+    <section class="card filters" style="margin-bottom:18px">
+      <div class="chips" id="cats"></div>
+      <div class="row">
+        <input type="search" id="q" placeholder="Поиск по подписи, речи, каналу…">
+        <select id="status"><option value="">В работе (без готовых, дублей и корзины)</option><option value="__all">Все, включая готовые</option></select>
+        <span class="muted small" id="total"></span>
+      </div>
+    </section>
+
+    <div class="grid" id="grid"></div>
+    <div class="row" style="justify-content:center;margin-top:20px"><button class="btn" id="more" hidden>Показать ещё</button></div>
+  </main>
+</div>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="/static/app.js?v=20"></script>
+<script>
+let cur = '', limit = 60, lastKey = '', openId = null;
+
+function card(i) {
+  const conf = i.category_confidence;
+  return `<article class="vcard" data-id="${i.id}">
+    <div class="poster">
+      ${i.thumbnail ? `<img loading="lazy" src="${i.thumbnail}" alt="">` : `<div class="noimg">${i.status === 'DISCOVERY_ONLY' ? 'только ссылка' : 'видео ещё не скачано'}</div>`}
+      <span class="st">${statusBadge(i.status)}</span>
+      ${i.duration ? `<span class="dur">${Math.floor(i.duration / 60)}:${String(Math.round(i.duration % 60)).padStart(2, '0')}</span>` : ''}
+    </div>
+    <div class="vbody">
+      <div class="vtitle">${esc(i.title || 'Без подписи')}</div>
+      <div class="row" style="gap:6px">${i.category_source ? catBadge(i.category, i.category_label) : '<span class="badge">ещё не разобран</span>'}
+        ${conf != null && i.category_source ? `<span class="muted small">${Math.round(conf)}%</span>` : ''}</div>
+      ${conf != null && i.category_source ? `<div class="conf"><i style="width:${Math.round(conf)}%;background:${catColor(i.category)}"></i></div>` : ''}
+      <div class="vmeta">${i.source === 'telegram' && i.channel ? '@' + esc(i.channel) : esc(i.source)} · #${i.id}</div>
+    </div>
+  </article>`;
+}
+
+async function load(force = false) {
+  const p = new URLSearchParams({ limit });
+  if (cur) p.set('category', cur);
+  if ($('#status').value === '__all') p.set('show_all', 'true');
+  else if ($('#status').value) p.set('status', $('#status').value);
+  if ($('#q').value.trim()) p.set('q', $('#q').value.trim());
+  const d = await api('/api/items?' + p);
+  const key = JSON.stringify(d);
+  if (!force && key === lastKey) return;
+  lastKey = key;
+  const counts = d.category_counts;
+  const all = Object.values(counts).reduce((a, b) => a + b, 0);
+  $('#cats').innerHTML = `<button class="chip ${cur ? '' : 'on'}" data-c="">Все<span class="n">${all}</span></button>` +
+    CATEGORIES.filter(c => counts[c.id]).map(c => `<button class="chip ${c.id === cur ? 'on' : ''}" data-c="${c.id}">${esc(c.label)}<span class="n">${counts[c.id]}</span></button>`).join('');
+  $('#total').textContent = d.total ? `Показано ${d.items.length} из ${d.total}` : '';
+  $('#more').hidden = d.items.length >= d.total;
+  $('#grid').innerHTML = d.items.length ? d.items.map(card).join('') :
+    `<div class="card empty" style="grid-column:1/-1"><div class="big">🎞</div><b>${all ? 'Ничего не нашлось' : 'Роликов пока нет'}</b>${all ? 'Попробуйте другой фильтр или поиск.' : 'Добавьте каналы на странице «Источники» — ролики появятся здесь сами.'}</div>`;
+}
+
+async function openItem(id) {
+  openId = id;
+  const i = await api('/api/items/' + id);
+  const sc = Object.entries(i.scores).map(([k, v]) => `<div class="score"><b>${v == null ? '—' : Math.round(v)}</b><span>${k}</span></div>`).join('');
+  $('#modal').innerHTML = `
+    <div class="player">${i.video ? `<video src="${i.video}" controls autoplay muted playsinline></video>` : '<div class="muted">видео нет</div>'}</div>
+    <div class="info">
+      <button class="btn ghost x" id="close" title="Закрыть (Esc)">✕</button>
+      <div>
+        <div class="row" style="gap:6px;margin-bottom:6px">${statusBadge(i.status)}<span class="badge">${esc(i.rights)}</span>${i.video_kind ? `<span class="muted small">${i.video_kind}</span>` : ''}</div>
+        <h2 style="font-size:17px;line-height:1.35">${esc(i.title || 'Без подписи')}</h2>
+        <div class="muted small" style="margin-top:4px">${i.source_url && i.source_url.startsWith('http') ? `<a href="${esc(i.source_url)}" target="_blank" rel="noopener">${esc(i.source_url)}</a>` : esc(i.source)}</div>
+      </div>
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px"><b style="font-size:13px">Категория</b>
+          <span class="muted small">${i.category_confidence != null ? Math.round(i.category_confidence) + '% · ' : ''}${CAT_SOURCE[i.category_source] || 'ещё не разобран'}</span></div>
+        <select id="catSel" style="width:100%">${catOptions(i.category)}</select>
+        ${i.category_reason ? `<p class="small muted" style="margin:6px 0 0">${esc(i.category_reason)}</p>` : ''}
+      </div>
+      ${i.video ? `<div><div class="row" style="justify-content:space-between"><b style="font-size:13px">Описание</b>
+          <span class="row" style="gap:6px"><a class="btn sm" href="/editor?item=${i.id}">✂️ В редактор</a>${i.ready_path ? `<a class="btn sm" href="/ready?item=${i.id}">в «Готовых» ✓</a>` : `<button class="btn sm primary" id="toReady">В готовые</button>`}</span></div>
+        <div id="descBox" style="margin-top:6px"></div>
+        <div class="row" style="margin-top:6px"><button class="btn sm" id="saveDesc">Сохранить описание</button></div></div>` : ''}
+      <div class="scores">${sc}</div>
+      <dl class="kv">
+        ${i.moderation_flags ? `<dt>Модерация</dt><dd>${esc(i.moderation_flags)}</dd>` : ''}
+        ${i.summary ? `<dt>Кратко</dt><dd>${esc(i.summary)}</dd>` : ''}
+        ${i.hook ? `<dt>Хук</dt><dd>${esc(i.hook)}</dd>` : ''}
+        ${i.source_quality && i.source_quality.width ? `<dt>Исходник</dt><dd>${srcQuality(i.source_quality)}</dd>` : ''}
+        ${i.attribution ? `<dt>Источник</dt><dd>${esc(i.attribution)}</dd>` : ''}
+        ${i.ai_provider ? `<dt>Оценивал</dt><dd>${esc(i.ai_provider === 'llamacpp' ? 'локальная нейросеть (Qwen 7B)' : i.ai_provider)}</dd>` : ''}
+      </dl>
+      ${i.caption ? `<div><b style="font-size:13px">Подпись</b><div class="quote">${esc(i.caption)}</div></div>` : ''}
+      ${i.transcript ? `<div><b style="font-size:13px">Речь в ролике</b><div class="quote">${esc(i.transcript)}</div></div>` : ''}
+    </div>`;
+  $('#modalBg').classList.add('open');
+  $('#close').onclick = closeModal;
+  if ($('#descBox')) {
+    const ta = await descEditor($('#descBox'), i.description);
+    $('#saveDesc').onclick = async () => {
+      try { await api(`/api/items/${id}/description`, { method: 'PUT', body: JSON.stringify({ description: ta.value }) }); toast('Описание сохранено', 'ok'); }
+      catch (err) { toast(err.message, 'err'); }
+    };
+    if ($('#toReady')) $('#toReady').onclick = async () => {
+      try { const r = await api(`/api/items/${id}/to-ready`, { method: 'POST', body: JSON.stringify({ description: ta.value }) });
+        toast(r.mode === 'render' ? 'Монтирую (шаблон «Размытый фон» или ваши настройки редактора) — ролик сам появится в «Готовых»' : 'Ролик в «Готовых»', 'ok'); load(true); openItem(id); }
+      catch (err) { toast(err.message, 'err'); }
+    };
+  }
+  $('#catSel').onchange = async e => {
+    try { await api('/api/items/' + id, { method: 'PATCH', body: JSON.stringify({ category: e.target.value }) }); toast('Категория сохранена', 'ok'); load(true); openItem(id); }
+    catch (err) { toast(err.message, 'err'); }
+  };
+}
+function closeModal() { $('#modalBg').classList.remove('open'); $('#modal').innerHTML = ''; openId = null; }
+
+$('#grid').addEventListener('click', e => { const c = e.target.closest('.vcard'); if (c) openItem(c.dataset.id); });
+$('#cats').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; cur = b.dataset.c; load(true); });
+$('#status').onchange = () => load(true);
+let qTimer; $('#q').oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(() => load(true), 250); };
+$('#more').onclick = () => { limit += 60; load(true); };
+$('#modalBg').addEventListener('click', e => { if (e.target.id === 'modalBg') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && openId) closeModal(); });
+
+// ---------- «Автозалив в кружке» ----------
+$('#parseNow').onclick = async () => { try { const r = await api('/api/channels/check-all', { method: 'POST' }); toast(r.queued ? `Парсинг запущен: ${r.queued}` : 'Каналы уже проверяются', 'ok'); } catch (e) { toast(e.message, 'err'); } };
+igEnabled().then(on => { $('#autoCircle').hidden = !on; });
+$('#autoCircle').onclick = async () => {
+  const [st, bgs, rec] = await Promise.all([api('/api/instagram-web/status'), api('/api/backgrounds'), api('/api/publishing/descriptions?limit=15').catch(() => ({ descriptions: [] }))]);
+  const accs = (st.accounts || []).filter(a => !a.excluded).map(a => a.username);
+  if (!accs.length) return toast('Сначала подключите Instagram и обновите список аккаунтов на странице «Instagram»', 'err');
+  const def = (await api('/api/instagram-web/autofill/backgrounds', { method: 'POST', body: JSON.stringify({ accounts: accs }) }));
+  const bgOpts = cur => bgs.items.map(b => `<option value="${b.id}" ${b.id === cur ? 'selected' : ''}>${esc(b.name)}${b.use_count ? ' ✓' + b.use_count : ''}</option>`).join('');
+  const bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.style.zIndex = 30;
+  bg.innerHTML = `<div class="modal" style="display:block;max-width:620px;padding:22px 24px;max-height:calc(100vh - 48px);overflow:auto">
+    <div class="row" style="justify-content:space-between"><h2>🔵 Автозалив в кружке</h2><button class="btn ghost" data-x>✕</button></div>
+    <p class="small muted" style="margin:6px 0 12px">Нейросеть отберёт лучшие ещё не опубликованные ролики (без текста в кадре, главное в центре, высокая оценка, свежие), впишет каждый в кружок с белой обводкой чуть выше центра, снизу поставит баннер${def.banner ? ' «' + esc(def.banner.name) + '»' : ''} с хромакеем, фон — свой у каждого аккаунта. Без текста. Готовые ролики сразу публикуются подряд.</p>
+    ${def.banner ? '' : '<div class="warnbox" style="margin-bottom:8px">Баннер не найден: загрузите его в редакторе (раздел «Баннер»). Без баннера будут только кружок и фон.</div>'}
+    <div class="stack" style="gap:8px">${accs.map(a => `<div class="row" style="gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px">
+        <label class="row" style="gap:6px;min-width:170px"><input type="checkbox" data-acc="${esc(a)}" checked> <b>@${esc(a)}</b></label>
+        <img data-bgimg="${esc(a)}" src="${def.backgrounds[a] ? '/api/editor/assets/' + def.backgrounds[a] + '/preview' : ''}" style="width:30px;aspect-ratio:9/16;object-fit:cover;border-radius:4px;background:var(--surface-2)">
+        <select data-bg="${esc(a)}" style="flex:1"><option value="">размытый ролик</option>${bgOpts(def.backgrounds[a])}</select></div>`).join('')}</div>
+    <div class="row" style="margin-top:12px"><label class="row small" style="gap:6px">Сколько на аккаунт <input type="number" id="afN" value="20" min="1" max="100" style="width:64px;font:inherit;padding:4px 6px"></label></div>
+    <label class="field" style="margin-top:10px">Описание (необязательно, одно для всех)<textarea id="afCap" style="min-height:70px"></textarea></label>
+    <select id="afRec" style="font-size:12px;padding:3px 6px;margin-top:4px"><option value="">вставить из последних…</option>${rec.descriptions.map((t, i) => `<option value="${i}">${esc(t.slice(0, 70))}</option>`).join('')}</select>
+    <div id="afPlan" class="small" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn" id="afPreview">Посмотреть отбор</button><button class="btn primary" id="afGo">Запустить</button></div></div>`;
+  document.body.append(bg);
+  $('[data-x]', bg).onclick = () => bg.remove();
+  $('#afRec', bg).onchange = e => { if (e.target.value !== '') { $('#afCap', bg).value = rec.descriptions[+e.target.value]; e.target.value = ''; } };
+  $$('[data-bg]', bg).forEach(sel => sel.onchange = () => { const img = $(`[data-bgimg="${sel.dataset.bg}"]`, bg); img.src = sel.value ? '/api/editor/assets/' + sel.value + '/preview' : ''; });
+  const body = () => {
+    const accounts = $$('[data-acc]', bg).filter(c => c.checked).map(c => c.dataset.acc), backgrounds = {};
+    accounts.forEach(a => backgrounds[a] = $(`[data-bg="${a}"]`, bg).value || null);
+    return { accounts, backgrounds, per_account: +$('#afN', bg).value || 20, caption: $('#afCap', bg).value };
+  };
+  $('#afPreview', bg).onclick = async () => {
+    const b = $('#afPreview', bg); b.disabled = true; b.textContent = 'Отбираю…';
+    try { const r = await api('/api/instagram-web/autofill/preview', { method: 'POST', body: JSON.stringify(body()) });
+      $('#afPlan', bg).innerHTML = `<div class="muted">Подходящих роликов всего: ${r.available}</div>` + Object.entries(r.plan).map(([a, ids]) => `<div style="margin-top:6px"><b>@${esc(a)}</b>: ${ids.length}<div style="display:flex;gap:4px;overflow-x:auto;margin-top:4px">${ids.map(id => `<img src="/media/thumb/${id}" title="${esc((r.detail[id] || {}).title || '')} · балл ${(r.detail[id] || {}).score}" style="width:34px;aspect-ratio:9/16;object-fit:cover;border-radius:4px;flex:none">`).join('')}</div></div>`).join(''); }
+    catch (e) { toast(e.message, 'err'); } finally { b.disabled = false; b.textContent = 'Посмотреть отбор'; }
+  };
+  $('#afGo', bg).onclick = async () => {
+    const b = body(); if (!b.accounts.length) return toast('Выберите аккаунты', 'err');
+    if (!confirm(`Запустить автозалив: по ${b.per_account} роликов на ${b.accounts.map(a => '@' + a).join(', ')}? Ролики смонтируются и сразу будут публиковаться подряд.`)) return;
+    $('#afGo', bg).disabled = true;
+    try { const r = await api('/api/instagram-web/autofill/start', { method: 'POST', body: JSON.stringify(b) });
+      const short = Object.entries(r.short || {}).map(([a, n]) => `@${a}: не хватило ${n}`).join(', ');
+      bg.remove(); toast(`Запущено: ${Object.entries(r.plan).map(([a, ids]) => '@' + a + ' ' + ids.length).join(', ')}. ${short ? short + '. ' : ''}Прогресс — на странице «Instagram».`, 'ok'); }
+    catch (e) { toast(e.message, 'err'); $('#afGo', bg).disabled = false; }
+  };
+};
+renderSidebar('videos');
+$('#status').innerHTML += Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}">${t}</option>`).join('');
+loadCategories().then(() => { load(true); setInterval(() => { if (!openId) load(); }, 5000); });
+</script>
+</body>
+</html>

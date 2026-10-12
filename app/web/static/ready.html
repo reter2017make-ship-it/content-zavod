@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Готовые видео — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+<style>
+  .poster .pick { position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; z-index: 2; cursor: pointer; }
+  .vcard.picked { outline: 3px solid var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Готовые видео</h1>
+        <p class="sub">Ролики для ручной публикации. Кнопка «В готовые» кладёт файл в папку <code id="folder">Готовые</code>. Описание хранится здесь, в карточке ролика.</p>
+      </div>
+      <button class="btn" id="openFolder">📂 Открыть папку</button>
+    </div>
+
+    <section class="card filters" style="margin-bottom:18px">
+      <div class="tabs" id="tabs"></div>
+      <div class="chips" id="txtF"></div>
+      <div class="chips" id="cats"></div>
+      <div class="row"><button class="btn ghost sm" id="selAll">выбрать все</button><button class="btn ghost sm" id="selNone">снять</button>
+        <span class="small muted" id="selN"></span><span class="spacer"></span>
+        <button class="btn" id="rmSel" disabled title="Файл уходит из папки «Готовые», ролик возвращается в редактор">↩ Убрать выбранные</button>
+        <button class="btn danger" id="delSel" disabled title="В корзину: исчезнет и из редактора, вернуть можно 7 дней">🗑 Удалить выбранные</button>
+        <button class="btn" id="igSel" hidden disabled>📸 Добавить выбранные в Instagram</button>
+        <button class="btn" id="dlSel" disabled>⬇ Скачать выбранные</button><button class="btn primary" id="dlAll">⬇ Скачать всё во вкладке</button></div>
+      <p class="hint" style="margin:0">Файлы копируются без пересжатия в папку «Загрузки/Reels» как «reels 1.mp4», «reels 2.mp4»… (номера не повторяются), только видео. Скачанные ролики уходят в корзину: их можно вернуть, через 7 дней корзина очищается сама.</p>
+    </section>
+
+    <div class="grid" id="grid"></div>
+  </main>
+</div>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="/static/app.js?v=20"></script>
+<script>
+let IG_ON = false, IGQ = new Set();
+async function loadIg() { if (!IG_ON) return; try { IGQ = new Set((await api('/api/instagram-web/queued-ids')).ids); if (D) render(); } catch { } }
+igEnabled().then(on => { IG_ON = on; $('#igSel').hidden = !on; loadIg(); });
+let TXT = '';
+let D = null, tab = 'ready', cat = '', lastKey = '', openId = null, chosen = new Set(), lastPick = null, shown = [];
+const TABS = {
+  ready: ['В готовых', i => i.ready_path && !i.posted_at],
+  posted: ['Опубликованные', i => !!i.posted_at],
+};
+const today = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; };
+const day = iso => iso ? new Date(iso).toLocaleDateString('ru') : '';
+
+function card(i) {
+  const short = i.src.width ? Math.min(i.src.width, i.src.height) : null;
+  return `<article class="vcard ${chosen.has(i.id) ? 'picked' : ''}" data-id="${i.id}">
+    <div class="poster"><input type="checkbox" class="pick" ${chosen.has(i.id) ? 'checked' : ''}><span style="position:absolute;top:6px;left:8px;z-index:2;display:flex;gap:4px"><button class="btn sm rm1" title="Убрать из готовых (вернуть в редактор)" style="padding:2px 7px">↩</button><button class="btn sm del1" title="Удалить в корзину" style="padding:2px 7px">🗑</button></span>
+      <img loading="lazy" src="${i.thumbnail}" alt="">
+      ${IGQ.has(i.id) ? '<span class="badge info" style="position:absolute;bottom:8px;left:8px">📸 в очереди</span>' : ''}
+      <span class="st">${i.posted_at ? `<span class="badge ok">выложен ${day(i.posted_at)}</span>` : i.ready_path ? '<span class="badge accent">в папке</span>' : '<span class="badge">новый</span>'}</span>
+      ${i.duration ? `<span class="dur">${Math.floor(i.duration / 60)}:${String(Math.round(i.duration % 60)).padStart(2, '0')}</span>` : ''}
+    </div>
+    <div class="vbody">
+      <div class="vtitle">${esc(i.description || i.title || 'Без подписи')}</div>
+      <div class="row" style="gap:6px">${i.has_text == null ? '' : i.has_text ? `<span class="badge info" title="${esc('В кадре: ' + (i.screen_text || ''))}">🔤 есть текст</span>` : '<span class="badge">без текста</span>'}${catBadge(i.category, i.category_label)}
+        ${short ? `<span class="badge ${short < 540 ? 'err' : short < 720 ? 'warn' : ''}" title="разрешение исходника">${i.src.width}×${i.src.height}</span>` : ''}</div>
+      <div class="vmeta">${chanLabel(i)} · #${i.id}${i.ready_missing ? ' · <span style="color:var(--err)">файл удалён из папки</span>' : ''}</div>
+    </div>
+  </article>`;
+}
+
+function render() {
+  const inTab = D.items.filter(TABS[tab][1]);
+  $('#folder').textContent = D.folder;
+  $('#tabs').innerHTML = Object.entries(TABS).map(([k, [t, f]]) => `<button class="chip ${k === tab ? 'on' : ''}" data-t="${k}">${t}<span class="n">${D.items.filter(f).length}</span></button>`).join('');
+  const counts = {};
+  inTab.forEach(i => { counts[i.category] = (counts[i.category] || 0) + 1; });
+  if (cat && !counts[cat]) cat = '';
+  const nTxt = inTab.filter(i => i.has_text).length, nNo = inTab.filter(i => i.has_text === false).length;
+  $('#txtF').innerHTML = `<button class="chip ${TXT ? '' : 'on'}" data-txt="">все</button><button class="chip ${TXT === 'yes' ? 'on' : ''}" data-txt="yes" title="надписи в кадре исходника">🔤 есть текст<span class="n">${nTxt}</span></button><button class="chip ${TXT === 'no' ? 'on' : ''}" data-txt="no">без текста<span class="n">${nNo}</span></button>`;
+  $$('[data-txt]').forEach(b => b.onclick = () => { TXT = b.dataset.txt; render(); });
+  $('#cats').innerHTML = Object.keys(counts).length > 1 ? `<button class="chip ${cat ? '' : 'on'}" data-c="">Все категории</button>` +
+    CATEGORIES.filter(c => counts[c.id]).map(c => `<button class="chip ${c.id === cat ? 'on' : ''}" data-c="${c.id}">${esc(c.label)}<span class="n">${counts[c.id]}</span></button>`).join('') : '';
+  const rows = inTab.filter(i => (!cat || i.category === cat) && (!TXT || (TXT === 'yes') === !!i.has_text));
+  shown = rows.map(i => i.id);
+  chosen = new Set([...chosen].filter(id => D.items.some(i => i.id === id)));
+  $('#selN').textContent = chosen.size ? 'выбрано: ' + chosen.size : '';
+  $('#dlSel').disabled = !chosen.size; $('#dlAll').disabled = !rows.length; $('#igSel').disabled = !chosen.size; $('#rmSel').disabled = !chosen.size; $('#delSel').disabled = !chosen.size;
+  $('#grid').innerHTML = rows.length ? rows.map(card).join('') : `<div class="card empty" style="grid-column:1/-1"><div class="big">🎬</div><b>Пусто</b>${
+    tab === 'ready' ? 'Сюда попадают только ролики, которые вы отправили из редактора кнопкой «Сохранить и в Готовые» (или пачкой шаблоном).' : 'Отметьте ролик как опубликованный, когда выложите его.'}</div>`;
+}
+
+async function load(force = false) {
+  D = await api('/api/ready');
+  const key = JSON.stringify(D);
+  if (!force && key === lastKey) return;
+  lastKey = key;
+  render();
+}
+
+async function openItem(id) {
+  openId = id;
+  const i = D.items.find(x => x.id === id);
+  if (!i) return;
+  $('#modal').innerHTML = `
+    <div class="player"><video src="${i.video}" controls autoplay muted playsinline></video></div>
+    <div class="info">
+      <button class="btn ghost x" id="close" title="Закрыть (Esc)">✕</button>
+      <div>
+        <div class="row" style="gap:6px;margin-bottom:6px">${catBadge(i.category, i.category_label)}<span class="badge">${esc(i.rights)}</span>
+          ${i.posted_at ? `<span class="badge ok">выложен ${day(i.posted_at)}</span>` : i.ready_path ? '<span class="badge accent">в папке</span>' : ''}</div>
+        <h2 style="font-size:17px;line-height:1.35">${esc(i.title || 'Без подписи')}</h2>
+        <div class="small muted" style="margin-top:4px">${chanLabel(i)} · #${i.id}</div>
+      </div>
+      <dl class="kv">
+        <dt>Исходник</dt><dd>${srcQuality(i.src)}</dd>
+        <dt>Готовый файл</dt><dd>1080×1920, H.264 High, AAC</dd>
+        ${i.ready_name ? `<dt>В папке</dt><dd><code>${esc(i.ready_name)}</code>${i.ready_missing ? ' <span style="color:var(--err)">— файл удалён, нажмите «Обновить в папке»</span>' : ''}</dd>` : ''}
+        ${i.posted_note ? `<dt>Заметка</dt><dd>${esc(i.posted_note)}</dd>` : ''}
+      </dl>
+      <div>
+        <div class="row" style="justify-content:space-between"><b style="font-size:13px">Описание</b><button class="btn sm" id="copy">📋 Скопировать описание</button></div>
+        <div id="descBox" style="margin-top:6px"></div>
+        <div class="row" style="margin-top:6px"><button class="btn sm" id="saveDesc">Сохранить описание</button></div>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="toReady">${i.ready_path ? 'Обновить в папке' : 'В готовые'}</button>
+        <button class="btn" id="reveal" ${i.ready_path && !i.ready_missing ? '' : 'disabled title="сначала «В готовые»"'}>Показать в Finder</button>
+        <a class="btn" href="/media/download/${i.id}" download>Скачать</a>
+        <a class="btn" href="/editor?item=${i.id}">✂️ В редактор</a>
+        ${IG_ON ? (IGQ.has(i.id) ? '<a class="btn" href="/instagram">📸 В очереди Instagram</a>' : '<button class="btn" id="toIg">＋ В Instagram</button>') : ''}
+      </div>
+      <div class="review-bar" style="background:var(--surface-2)">
+        ${i.posted_at ? `<span class="small">Отмечен как опубликованный ${day(i.posted_at)}</span><span class="spacer"></span><button class="btn sm" id="unpost">Снять отметку</button>` :
+          `<span class="small">Выложили?</span><input type="date" id="postedDate" value="${today()}" style="font:inherit;padding:5px 8px;border:1px solid var(--line-2);border-radius:8px">
+           <input type="text" id="postedNote" placeholder="ссылка или заметка (необязательно)" style="flex:1;min-width:140px;padding:5px 8px">
+           <button class="btn ok sm" id="posted">Отметить как опубликованное</button>`}
+      </div>
+      ${i.ready_path ? '<div><button class="btn sm danger" id="remove">Убрать из готовых</button> <span class="small muted">файл удалится из папки «Готовые», в заводе ролик останется</span></div>' : ''}
+    </div>`;
+  $('#modalBg').classList.add('open');
+  const ta = await descEditor($('#descBox'), i.description);
+  const act = async (fn, okText) => { try { await fn(); if (okText) toast(okText, 'ok'); await load(true); openItem(id); } catch (e) { toast(e.message, 'err'); } };
+  $('#close').onclick = closeModal;
+  $('#copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(ta.value); toast('Описание скопировано', 'ok'); }
+    catch { ta.select(); document.execCommand('copy'); toast('Описание скопировано', 'ok'); }
+  };
+  $('#saveDesc').onclick = () => act(() => api(`/api/items/${id}/description`, { method: 'PUT', body: JSON.stringify({ description: ta.value }) }), 'Описание сохранено');
+  $('#toReady').onclick = () => act(() => api('/api/ready/' + id, { method: 'POST', body: JSON.stringify({ description: ta.value }) }), 'Ролик в папке «Готовые»');
+  if ($('#reveal')) $('#reveal').onclick = () => api(`/api/ready/${id}/reveal`, { method: 'POST' }).then(() => toast('Открыл Finder', 'ok')).catch(e => toast(e.message, 'err'));
+  if ($('#posted')) $('#posted').onclick = () => act(() => api(`/api/ready/${id}/posted`, { method: 'POST', body: JSON.stringify({ posted: true, date: $('#postedDate').value || null, note: $('#postedNote').value || null }) }), 'Отмечено как опубликованное');
+  if ($('#unpost')) $('#unpost').onclick = () => act(() => api(`/api/ready/${id}/posted`, { method: 'POST', body: JSON.stringify({ posted: false }) }), 'Отметка снята');
+  if ($('#toIg')) $('#toIg').onclick = () => igAddDialog([{ id, title: i.title, description: ta.value }], () => { loadIg(); openItem(id); });
+  if ($('#remove')) $('#remove').onclick = () => { if (confirm('Убрать ролик из «Готовых»? Файл удалится из папки, в заводе ролик останется.')) act(() => api('/api/ready/' + id, { method: 'DELETE' }), 'Убран из готовых'); };
+}
+function closeModal() { $('#modalBg').classList.remove('open'); $('#modal').innerHTML = ''; openId = null; }
+
+$('#grid').addEventListener('click', e => {
+  const c = e.target.closest('.vcard'); if (!c) return;
+  const id = +c.dataset.id;
+  if (e.target.closest('.rm1')) { e.preventDefault(); return removeReady([id]); }
+  if (e.target.closest('.del1')) { e.preventDefault(); return deleteReady([id]); }
+  if (!e.target.classList.contains('pick') && !e.shiftKey && !e.metaKey) return openItem(id);
+  e.preventDefault();
+  const on = !chosen.has(id);
+  if (e.shiftKey && lastPick != null) { const [a, b] = [shown.indexOf(lastPick), shown.indexOf(id)].sort((x, y) => x - y); shown.slice(a, b + 1).forEach(x => on ? chosen.add(x) : chosen.delete(x)); }
+  else on ? chosen.add(id) : chosen.delete(id);
+  lastPick = id; render();
+});
+// «Убрать из готовых»: the copy in the folder goes; the video stays in the factory (editor) and can be sent again
+async function removeReady(ids) {
+  if (!ids.length || !confirm(`Убрать из «Готовых»: ${ids.length} ${plural(ids.length, 'ролик', 'ролика', 'роликов')}? Файл удалится из папки «Готовые», ролик останется в редакторе.`)) return;
+  let ok = 0;
+  for (const id of ids) { try { await api('/api/ready/' + id, { method: 'DELETE' }); ok++; chosen.delete(id); } catch (e) { toast(e.message, 'err'); } }
+  toast(`Убрано из «Готовых»: ${ok}`, 'ok'); load(true);
+}
+$('#rmSel').onclick = () => removeReady([...chosen]);
+// «🗑 Удалить»: to the trash (gone from «Готовые» and the editor; «Вернуть» for 7 days)
+async function deleteReady(ids) {
+  if (!ids.length || !confirm(`Удалить в корзину: ${ids.length} ${plural(ids.length, 'ролик', 'ролика', 'роликов')}? Пропадут и из «Готовых», и из редактора. Вернуть можно в течение 7 дней.`)) return;
+  let ok = [];
+  for (const id of ids) { try { await api(`/api/items/${id}/trash`, { method: 'POST' }); ok.push(id); chosen.delete(id); } catch (e) { toast(e.message, 'err'); } }
+  await load(true);
+  const bar = document.createElement('div'); bar.className = 'toast'; bar.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:50;display:flex;gap:12px;align-items:center';
+  bar.innerHTML = `В корзине: ${ok.length} <button class="btn sm">Вернуть</button>`;
+  $('button', bar).onclick = async () => { await api('/api/items/restore-many', { method: 'POST', body: JSON.stringify({ ids: ok }) }); bar.remove(); toast('Вернул', 'ok'); load(true); };
+  document.body.append(bar); setTimeout(() => bar.remove(), 12000);
+}
+$('#delSel').onclick = () => deleteReady([...chosen]);
+$('#selAll').onclick = () => { shown.forEach(i => chosen.add(i)); render(); };
+$('#selNone').onclick = () => { chosen.clear(); render(); };
+async function download(ids) {
+  if (!ids.length) return;
+  if (!confirm(`Скопировать ${ids.length} ${plural(ids.length, 'ролик', 'ролика', 'роликов')} в «Загрузки/Reels»? После копирования они уйдут из «Готовых» в корзину.`)) return;
+  try {
+    const r = await api('/api/ready/download', { method: 'POST', body: JSON.stringify({ ids }) });
+    const ok = r.files.map(f => f.id), bad = Object.keys(r.errors).length;
+    chosen.clear(); await load(true);
+    const bar = document.createElement('div'); bar.className = 'toast'; bar.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:50;display:flex;gap:12px;align-items:center';
+    bar.innerHTML = `Скопировано ${ok.length}: ${esc(r.files.map(f => f.file).slice(0, 3).join(', '))}${ok.length > 3 ? '…' : ''}${bad ? ` · не получилось ${bad}: ${esc(Object.values(r.errors)[0])}` : ''} <button class="btn sm">Вернуть в «Готовые»</button>`;
+    $('button', bar).onclick = async () => { await api('/api/items/restore-many', { method: 'POST', body: JSON.stringify({ ids: ok }) }); bar.remove(); toast('Вернул в «Готовые»', 'ok'); load(true); };
+    document.body.append(bar); setTimeout(() => bar.remove(), 15000);
+  } catch (e) { toast(e.message, 'err'); }
+}
+$('#dlSel').onclick = () => download([...chosen]);
+$('#igSel').onclick = () => igAddDialog([...chosen].map(id => { const i = D.items.find(x => x.id === id); return { id, title: i && i.title, description: i && i.description }; }), () => { chosen.clear(); loadIg(); });
+$('#dlAll').onclick = () => download(shown);
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { tab = b.dataset.t; cat = ''; render(); } });
+$('#cats').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { cat = b.dataset.c; render(); } });
+$('#openFolder').onclick = () => api('/api/ready-folder/open', { method: 'POST' }).then(() => toast('Открыл папку в Finder', 'ok')).catch(e => toast(e.message, 'err'));
+$('#modalBg').addEventListener('click', e => { if (e.target.id === 'modalBg') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && openId) closeModal(); });
+
+renderSidebar('ready');
+loadCategories().then(() => load(true)).then(() => {
+  const want = +new URLSearchParams(location.search).get('item');
+  const it = want && D.items.find(i => i.id === want);
+  if (it) { tab = Object.keys(TABS).find(k => TABS[k][1](it)); render(); openItem(want); }
+});
+setInterval(() => { if (!openId) load(); }, 5000);
+</script>
+</body>
+</html>

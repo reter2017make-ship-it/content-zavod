@@ -1,0 +1,27 @@
+# Категории роликов. keywords — основы слов для оценки по правилам (без AI);
+# слово должно начинаться с основы: «кот» совпадает с «котик», но не с «наркотик».
+# AI-модель выбирает из этого же списка. uncertain = «не разобрался»: модель не угадывает.
+categories:
+  recipes:       {label: Рецепты, keywords: [рецепт, готовим, готовить, приготов, паст, чеснок, масл, духовк, ингредиент, тесто, соус, recipe, cook]}
+  food:          {label: Еда, keywords: [еда, вкусн, блюд, ресторан, food]}
+  memes:         {label: Мемы, keywords: [мем, мемас, прикол, ржак, meme]}
+  funny:         {label: Смешное, keywords: [смешн, угар, ржач, юмор, огурец, funny, lol]}
+  stream_clips:  {label: Нарезки стримов, keywords: [стрим, стример, твич, twitch, kick, кик, донат, чат, stream]}
+  sports:        {label: Спорт, keywords: [гол, матч, вратар, футбол, хоккей, бокс, ufc, nba, болельщик, чемпион, тренер, забил]}
+  gaming:        {label: Игры, keywords: [игр, гейм, катк, game, gaming, cs2, dota, minecraft]}
+  animals:       {label: Животные, keywords: [щенок, собак, котён, котик, кошк, кот, животн, птиц, осьминог, puppy, dog, cat]}
+  cars:          {label: Авто, keywords: [машин, авто, двигател, тачк, car]}
+  luxury:        {label: Люкс, keywords: [люкс, роскош, яхт, luxury]}
+  travel:        {label: Путешествия, keywords: [путешеств, страна, город, отпуск, travel]}
+  facts:         {label: Факты, keywords: [знаете ли, факт, оказывается, удивительн, fact]}
+  science:       {label: Наука, keywords: [наук, учён, эксперимент, science]}
+  technology:    {label: Технологии, keywords: [технолог, гаджет, смартфон, нейросет, айфон, tech]}
+  relationships: {label: Отношения, keywords: [отношени, парень, девушк, свидани, муж, жена]}
+  fails:         {label: Фейлы, keywords: [фейл, неудач, упал, fail]}
+  motivation:    {label: Мотивация, keywords: [мотивац, успех, цель, motivation]}
+  news:          {label: Новости, keywords: [новост, news, срочно]}
+  movies:        {label: Кино, keywords: [фильм, кино, movie]}
+  series:        {label: Сериалы, keywords: [сериал, серия, series]}
+  music:         {label: Музыка, keywords: [песн, трек, музык, music]}
+  other:         {label: Другое, keywords: []}
+  uncertain:     {label: Не разобрался, keywords: []}

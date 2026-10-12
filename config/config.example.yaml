@@ -1,0 +1,266 @@
+factory:
+  max_items_per_run: 100
+  max_retries: 3
+  loop_interval_minutes: 10
+  retry_delay_minutes: 15
+
+paths:
+  data_dir: data
+  database: database/content.db
+  logs_dir: logs
+
+# Права: решение пользователя (2026-10-07) — проверки и ручного одобрения нет, все ролики одобряются сами,
+# пользователь публикует вручную и сам отвечает за права. Источник и лицензия всё равно записываются.
+rights:
+  auto_approve: true
+
+sources:
+  filesystem:
+    enabled: true
+    folders:
+      - path: data/inbox
+        category: other
+        rights_status: USER_OWNED
+        source_score: 70
+      - path: data/inbox_unverified   # чужие ролики: права неизвестны, всегда ручная проверка
+        category: other
+        rights_status: UNKNOWN
+        source_score: 50
+    extensions: [".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"]
+
+  # Стоки с лицензией (права LICENSED). Нужны бесплатные ключи в .env.
+  pexels:
+    enabled: false   # отложено: код готов, нужен ключ
+    per_query: 3
+    requests_per_minute: 30
+    source_score: 60
+    orientations: [portrait, landscape, square]   # для Shorts вертикальные в приоритете
+    queries:
+      - {query: cooking, category: recipes}
+      - {query: city night, category: travel}
+      - {query: cute animals, category: animals}
+
+  pixabay:
+    enabled: false   # отложено: код готов, нужен ключ
+    per_query: 3
+    requests_per_minute: 30
+    source_score: 60
+    queries:
+      - {query: food, category: food}
+      - {query: nature, category: interesting}
+
+  # Wikimedia Commons: ключ не нужен. Лицензия каждого файла проверяется;
+  # некоммерческие (NC) и без переработки (ND) отбрасываются.
+  wikimedia:
+    enabled: false   # отложено: код готов, нужен ключ
+    per_query: 2
+    requests_per_minute: 20
+    source_score: 55
+    max_size_mb: 80          # контактный email для Wikimedia задаётся в .env: WIKIMEDIA_CONTACT
+    queries:
+      - {query: cat, category: animals}
+      - {query: cooking, category: recipes}
+
+  # Telegram: публичная веб-версия открытых каналов (t.me/s/<канал>), без входа и ключей.
+  # Каналы добавляются на странице «Источники» веб-интерфейса и хранятся в базе.
+  # Все ролики — REQUIRES_REVIEW (ручная проверка прав).
+  telegram:
+    enabled: true
+    page_interval_seconds: 3    # пауза между запросами страниц одного канала
+    parallel_channels: 3        # сколько каналов сканировать одновременно
+    parallel_downloads: 3
+    initial_pages: 3            # первая проверка: ~60 последних постов
+    max_pages: 10               # повторная: до последнего уже виденного поста, но не больше
+    per_channel: 20             # максимум новых видео за одну проверку канала
+    initial_per_channel: 5      # при первой проверке нового канала — только 5 последних видео
+    block_pause_minutes: 15     # при 429/блокировке — пауза, без обхода
+    source_score: 50
+
+  twitch:
+    enabled: false
+  kick:
+    enabled: false
+
+filters:   # решение пользователя 2026-10-07: почти ничего не отсеивать
+  min_duration: 1
+  max_duration: 180
+  min_width: 0
+  min_height: 0
+  max_filesize_mb: 2048
+
+transcription:
+  enabled: true
+  model: small            # tiny | base | small | medium | large-v3
+  compute_type: int8
+  language:               # пусто = автоопределение
+  vad_filter: true
+  beam_size: 5
+
+ai:
+  provider: llamacpp      # rules | llamacpp (локальная модель) | openai (любой OpenAI-совместимый API, ключ в .env)
+  max_transcript_chars: 4000
+  min_category_confidence: 60   # ниже — категория «не разобрался»
+  llamacpp:
+    repo_id: Qwen/Qwen2.5-7B-Instruct-GGUF
+    files:
+      - qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+      - qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf
+    n_ctx: 4096
+    n_gpu_layers: -1      # -1 = все слои на GPU (Metal)
+    temperature: 0.2
+    allow_download: true
+  openai:
+    model: gpt-4o-mini
+    temperature: 0.2
+    timeout_seconds: 60
+    json_mode: true
+
+scores:
+  # оценки только для сортировки и меток, не для отсева (решение пользователя 2026-10-07)
+  min_quality_score: 0
+  min_viral_score: 0
+  min_viral_score_rules: 0
+  min_content_score: 0
+  moderation_reject: false   # флаги модерации — только пометка
+  weights:
+    viral: 0.40
+    quality: 0.20
+    originality: 0.15
+    source: 0.10
+    freshness: 0.10
+    format: 0.05
+  quality_gates:            # отсеивается только явный брак
+    max_black_ratio: 0.95
+    max_frozen_ratio: 0.98
+    max_blur: 1000
+
+moderation:
+  enabled: true
+
+duplicates:
+  phash_frames: 5
+  phash_max_distance: 10
+  visual_reject: false   # визуально похожие — только пометка; точные копии файла (SHA-256) отсеиваются всегда
+
+processing:
+  auto_render: false    # автомонтаж выключен: ролик монтируется, только когда вы отправили его из редактора в «Готовые»
+  # Пресет качества финального ролика (рендер один раз из исходника; в «Готовые» файл копируется без пересжатия)
+  width: 1080
+  height: 1920
+  fps: source           # source = как у исходника (до max_fps), иначе fallback_fps; или число, например 30
+  max_fps: 60
+  fallback_fps: 30
+  crf: 17               # H.264 High, 16–18 — визуально без потерь
+  preset: slow
+  scale_flags: lanczos
+  mode: blur            # blur | crop
+  vertical_tolerance: 0.08
+  background_blur: 20
+  background_darken: 0.15
+  loudness_target: -14
+  audio_bitrate: 256k   # AAC 48 кГц
+  add_silent_audio_if_missing: true
+  thumbnail_width: 540
+
+subtitles:
+  enabled: true
+  style: default
+  font_size: 52
+  max_chars_per_line: 32
+  max_lines: 2
+  position: center
+  auto_from_transcript: true   # если нет .srt, субтитры берутся из распознанной речи
+
+storage:
+  max_temp_gb: 50
+  warn_disk_percent: 80
+  cleanup_disk_percent: 85   # выше — удаляются исходники отклонённых роликов (старые первыми)
+  stop_disk_percent: 90
+  backup_keep: 14            # ежедневные копии базы в data/backups
+
+logging:
+  level: INFO
+  backup_days: 14
+
+# Публикация: только Instagram Reels через официальный Instagram Graph API (Facebook Login for Business).
+# Каждый ролик попадает в очередь только вручную: человек пишет описание и подтверждает права.
+# Публикация через Instagram Graph API НЕ используется (решение пользователя: выкладывает вручную из «Готовых»).
+# Код оставлен на будущее; включать только вместе с приложением Meta (docs/instagram.md).
+publishing:
+  enabled: false
+  timezone: Europe/Moscow       # «сегодня» для дневного лимита и время в интерфейсе
+  check_interval_seconds: 30
+  max_retries: 3                # потом WAITING_USER: нужен человек
+  retry_delay_minutes: 5        # пауза перед повтором: 5, 15, 45 мин
+  instagram:
+    enabled: false
+    dry_run: true               # режим по умолчанию; переключается в интерфейсе после проверки подключения
+    api_version: v25.0
+    daily_limit: 5              # наш лимит в сутки (у Instagram — 100 публикаций через API за 24 ч)
+    min_interval_minutes: 60    # пауза между публикациями
+    api_quota_per_24h: 100
+    share_to_feed: true         # показывать Reels и в ленте профиля
+    poll_seconds: 10            # как часто спрашивать статус обработки видео
+    processing_timeout_minutes: 15
+    token_refresh_days_before: 10   # обновить долгий токен, когда до конца срока осталось меньше
+    # Требования Reels из документации Meta (IG User Media → Reels specifications, 2026-10)
+    max_caption_chars: 2200
+    max_hashtags: 30
+    max_mentions: 20
+    min_duration: 3
+    max_duration: 900
+    max_file_mb: 300
+    max_bitrate_mbps: 25
+    max_width: 1920
+
+# Календарь парсинга: дни и время задаются на странице «Календарь» (хранятся в базе).
+# Пропущенный запуск (Mac спал или был выключен) догоняется, только если прошло не больше catch_up_hours.
+schedule:
+  timezone: Europe/Moscow
+  catch_up_hours: 3
+  default_times: ["10:00", "19:00"]   # расписание при первом запуске: каждый день в это время
+
+# «Готовые видео»: папка для ручной публикации (имена: дата_категория_канал_id.mp4, рядом .txt с описанием)
+ready:
+  dir: Готовые
+  download_dir: ~/Downloads/Reels   # «Скачать выбранные»: файлы reels 1.mp4, reels 2.mp4… (копия без пересжатия, без .txt)
+  trash_days: 7                     # скачанные и убранные в корзину ролики удаляются через столько дней
+
+# Instagram AutoPoster (app/instagram_web): публикация Reels через браузер (Playwright + отдельный профиль Chrome).
+# Решение пользователя 2026-10-07. Пароль не вводится и не хранится: вход делает человек в окне Chrome.
+# CAPTCHA и проверки Instagram не обходятся — очередь останавливается и ждёт человека.
+instagram_web:
+  enabled: true          # false — модуль не загружается, остальной завод работает как раньше
+  autopost: false        # автопостинг по расписанию (включается на странице «Instagram»)
+  window_start: "10:00"   # окно публикаций (00:00–23:59 — круглые сутки)
+  window_end: "23:00"
+  interval_minutes: 0    # 0 — подряд, сразу один за другим (решение пользователя); иначе пауза в минутах
+  max_posts_per_day: 0    # 0 — без дневного лимита
+  max_attempts: 3
+  retry_failed: true
+  auto_enqueue: false    # новые готовые ролики сами встают в очередь (без дублей)
+  debug: false           # видимый Chrome, подробный лог, скриншоты каждого шага
+  headless: false        # окно Chrome видно; true — работать без окна
+  processing_timeout_s: 120
+  profiles_dir: browser_profiles   # профиль Chrome: browser_profiles/instagram_<account>/ (не в git и не в архиве)
+  account: default
+
+web:
+  host: 127.0.0.1
+  port: 8765
+
+# «Автозалив в кружке» (страница «Ролики»): отбор лучших роликов на каждый аккаунт Instagram
+autofill:
+  per_account: 20
+  min_duration: 5          # секунд
+  max_duration: 60
+  min_short_side: 480      # px, меньшая сторона исходника
+  require_audio: true
+  weights:                 # из чего складывается «лучший»
+    no_text: 30            # без текста в кадре (кружок обрезает надписи)
+    viral: 30              # оценка вирусности локальной нейросети
+    center: 20             # главное — в центре кадра (то, что останется в кружке)
+    fresh: 10              # свежее выше
+    quality: 10            # техническое качество
+  circle: {size: 860, y: 300, border: 8}   # кружок 860 px чуть выше центра, белая обводка 8 px
+  banner: {similarity: 0.08, blend: 0.23}  # хромакей баннера снизу

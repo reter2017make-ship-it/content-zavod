@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Календарь парсинга — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+<style>
+  .sched { display: grid; gap: 14px; }
+  .sc { display: grid; gap: 12px; }
+  .sc.off { opacity: .6; }
+  .sc-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .days { display: flex; gap: 6px; flex-wrap: wrap; }
+  .days button { font: inherit; font-weight: 600; width: 44px; padding: 7px 0; border-radius: 9px; border: 1px solid var(--line-2); background: var(--surface); cursor: pointer; color: var(--text-2); }
+  .days button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .times { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tm { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line-2); border-radius: 9px; padding: 2px 4px 2px 8px; background: var(--surface); }
+  .tm input { font: inherit; border: none; background: transparent; color: var(--text); width: 92px; outline: none; }
+  .tm button { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 6px; }
+  .tm button:hover { color: var(--err); background: var(--err-bg); }
+  .switch { position: relative; width: 42px; height: 24px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; border-radius: 99px; background: var(--line-2); cursor: pointer; transition: .15s; }
+  .switch span::after { content: ''; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::after { transform: translateX(18px); }
+  .next { font-size: 13px; color: var(--text-2); }
+  .bigtime { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head"><div><h1>Календарь парсинга</h1>
+      <p class="sub">Когда завод проверяет каналы и забирает новые видео. Время — московское.</p></div>
+      <button class="btn primary lg" id="now">Парсить сейчас</button></div>
+    <section class="card" style="margin-bottom:16px">
+      <div class="row"><div><div class="muted small">Следующий парсинг</div><div class="bigtime" id="next">—</div></div>
+        <span class="spacer"></span><span class="small muted" style="max-width:420px">Если у канала есть своё включённое расписание, общее расписание его не трогает.
+          Пропущенный запуск (Mac спал или был выключен) догоняется в течение 3 часов.</span></div>
+    </section>
+    <div class="sched" id="list"></div>
+    <section class="card" style="margin-top:16px">
+      <div class="row"><b>Отдельное расписание для канала</b>
+        <select id="chan" style="min-width:220px"></select>
+        <button class="btn" id="addChan">＋ Добавить</button></div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js?v=20"></script>
+<script>
+let DATA = null;
+const fmtNext = iso => {
+  if (!iso) return 'не запланирован';
+  const d = new Date(iso), today = new Date(), tm = d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit', timeZone: DATA.timezone });
+  const day = d.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long', timeZone: DATA.timezone });
+  const same = d.toLocaleDateString('ru', { timeZone: DATA.timezone }) === today.toLocaleDateString('ru', { timeZone: DATA.timezone });
+  return (same ? 'сегодня' : day) + ' в ' + tm;
+};
+
+function card(s) {
+  const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  return `<section class="card sc ${s.enabled ? '' : 'off'}" data-id="${s.id}">
+    <div class="sc-head">
+      <label class="switch" title="Включить или выключить"><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}><span></span></label>
+      <b style="font-size:15px">${s.channel ? '@' + esc(s.channel) : 'Все каналы'}</b>
+      <span class="next">${s.enabled ? 'следующий: ' + fmtNext(s.next_run) : 'выключено'}</span>
+      <span class="spacer"></span>
+      ${s.channel ? '<button class="btn ghost sm danger" data-f="delete">Удалить</button>' : ''}
+    </div>
+    <div class="row"><span class="small muted" style="width:64px">Дни</span>
+      <div class="days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" class="${s.days.includes(i) ? 'on' : ''}">${d}</button>`).join('')}</div>
+      <button class="btn ghost sm" data-f="all">каждый день</button><button class="btn ghost sm" data-f="work">будни</button></div>
+    <div class="row"><span class="small muted" style="width:64px">Время</span>
+      <div class="times">${s.times.map((t, i) => `<span class="tm"><input type="time" value="${t}" data-t="${i}"><button type="button" data-del="${i}" title="Убрать">✕</button></span>`).join('')}
+        <button class="btn sm" data-f="addtime">＋ время</button></div></div>
+  </section>`;
+}
+
+async function load(d) {
+  DATA = d || await api('/api/schedules');
+  $('#next').textContent = fmtNext(DATA.next_run);
+  $('#list').innerHTML = DATA.schedules.map(card).join('') || '<div class="card empty"><b>Расписаний нет</b>Завод не будет парсить каналы сам — только по кнопке «Парсить сейчас».</div>';
+  const own = new Set(DATA.schedules.map(s => s.channel_id));
+  $('#chan').innerHTML = DATA.channels.filter(c => !own.has(c.id)).map(c => `<option value="${c.id}">@${esc(c.username)}</option>`).join('') || '<option value="">все каналы уже с расписанием</option>';
+}
+
+async function patch(id, body) {
+  try { await load(await api('/api/schedules/' + id, { method: 'PATCH', body: JSON.stringify(body) })); toast('Сохранено', 'ok'); }
+  catch (e) { toast(e.message, 'err'); load(); }
+}
+
+$('#list').addEventListener('click', async e => {
+  const c = e.target.closest('.sc'); if (!c) return;
+  const s = DATA.schedules.find(x => x.id === +c.dataset.id), f = e.target.dataset.f;
+  if (e.target.dataset.day != null) { const d = +e.target.dataset.day; const days = s.days.includes(d) ? s.days.filter(x => x !== d) : [...s.days, d]; return patch(s.id, { days }); }
+  if (e.target.dataset.del != null) return patch(s.id, { times: s.times.filter((_, i) => i !== +e.target.dataset.del) });
+  if (f === 'all') return patch(s.id, { days: [0, 1, 2, 3, 4, 5, 6] });
+  if (f === 'work') return patch(s.id, { days: [0, 1, 2, 3, 4] });
+  if (f === 'addtime') { const last = s.times[s.times.length - 1] || '09:00'; const h = (parseInt(last) + 3) % 24; return patch(s.id, { times: [...s.times, String(h).padStart(2, '0') + ':00'] }); }
+  if (f === 'delete' && confirm('Удалить расписание канала? Канал снова будет парситься по общему расписанию.')) {
+    try { await load(await api('/api/schedules/' + s.id, { method: 'DELETE' })); } catch (err) { toast(err.message, 'err'); }
+  }
+});
+$('#list').addEventListener('change', e => {
+  const c = e.target.closest('.sc'); if (!c) return;
+  const s = DATA.schedules.find(x => x.id === +c.dataset.id);
+  if (e.target.dataset.f === 'enabled') return patch(s.id, { enabled: e.target.checked });
+  if (e.target.dataset.t != null) { const times = [...s.times]; times[+e.target.dataset.t] = e.target.value; return patch(s.id, { times }); }
+});
+$('#addChan').onclick = async () => {
+  const id = +$('#chan').value; if (!id) return;
+  try { await load(await api('/api/schedules', { method: 'POST', body: JSON.stringify({ channel_id: id, days: [0, 1, 2, 3, 4, 5, 6], times: ['12:00'] }) })); toast('Расписание канала добавлено', 'ok'); }
+  catch (e) { toast(e.message, 'err'); }
+};
+$('#now').onclick = async () => {
+  try { const r = await api('/api/channels/check-all', { method: 'POST' }); toast(r.queued ? `Парсинг запущен: ${r.queued} ${plural(r.queued, 'канал', 'канала', 'каналов')}` : 'Все каналы уже в работе', 'ok'); }
+  catch (e) { toast(e.message, 'err'); }
+};
+renderSidebar('calendar');
+load();
+</script>
+</body>
+</html>

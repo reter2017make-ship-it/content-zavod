@@ -1,0 +1,18 @@
+# Запуск: docker compose up -d --build   →   http://127.0.0.1:8765
+# Остановить: docker compose down. Все данные лежат в папках рядом с этим файлом.
+services:
+  zavod:
+    build: .
+    image: kontent-zavod:latest
+    container_name: kontent-zavod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"     # открыт только на этом компьютере
+    volumes:
+      - ./data:/app/data           # скачанные видео, фоны, голоса озвучки
+      - ./database:/app/database   # база
+      - ./logs:/app/logs
+      - ./Готовые:/app/Готовые     # готовые ролики
+      - ./Reels:/app/Reels         # «Скачать выбранные» из «Готовых» → reels N.mp4
+      - ./credentials:/app/credentials   # вход в Telegram и ключи (.env) — личное, никому не передавать
+      - ./models:/app/models       # нейросеть и распознавание речи (скачиваются при первом запуске)

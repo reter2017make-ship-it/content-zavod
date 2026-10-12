@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Публикация — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Публикация</h1>
+        <p class="sub">Instagram Reels через официальный API Meta. В очередь ролик попадает только после вашего описания и подтверждения прав.</p>
+      </div>
+      <div class="row" id="headActions"></div>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+
+    <div class="pub-grid">
+      <div class="stack">
+        <section class="card">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px">
+            <h2>Готово к публикации</h2><span class="muted small" id="readyCount"></span>
+          </div>
+          <div class="mini-grid" id="ready"></div>
+        </section>
+
+        <section class="card">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px">
+            <h2>Очередь</h2>
+            <div class="tabs" id="tabs"></div>
+          </div>
+          <div class="queue" id="queue"></div>
+        </section>
+      </div>
+
+      <section class="card" id="account"></section>
+    </div>
+  </main>
+</div>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="/static/app.js?v=20"></script>
+<script>
+let D = null, tab = 'active', lastKey = '', modalOpen = false;
+const TABS = { active: ['Активные', ['QUEUED', 'PROCESSING', 'FAILED', 'WAITING_USER']], done: ['Опубликованные', ['PUBLISHED']], cancelled: ['Отменённые', ['CANCELLED']] };
+
+function headActions() {
+  const live = D.mode === 'live';
+  $('#headActions').innerHTML = `
+    <span class="mode">${live ? '<span class="badge ok">реальная публикация</span>' : '<span class="badge info" title="Весь путь проверяется, в Instagram ничего не отправляется">dry-run: ничего не отправляется</span>'}
+      ${D.paused ? '<span class="badge err">пауза</span>' : ''}</span>
+    <button class="btn" id="pauseBtn">${D.paused ? '▶ Снять паузу' : '⏸ Пауза публикаций'}</button>
+    <button class="btn" id="dryAll" title="Проверить всю очередь без отправки">Dry-run очереди</button>`;
+  $('#pauseBtn').onclick = async () => { await api('/api/publishing-settings/pause', { method: 'POST', body: JSON.stringify({ value: !D.paused }) }); toast(D.paused ? 'Публикации возобновлены' : 'Публикации на паузе', 'ok'); load(true); };
+  $('#dryAll').onclick = async () => {
+    const r = await api('/api/publishing-dry-run', { method: 'POST' });
+    toast(r.plans.length ? `Проверено: ${r.plans.length}. Готовы: ${r.plans.filter(p => p.ready).length}. Ничего не отправлено.` : 'Очередь пуста', 'ok'); load(true);
+  };
+}
+
+function tiles() {
+  const p = D.publications, n = st => p.filter(x => st.includes(x.status)).length, L = D.limits;
+  $('#tiles').innerHTML = `
+    <div class="tile accent"><div class="v">${L.today} / ${L.daily_limit}</div><div class="l">опубликовано сегодня (лимит)</div></div>
+    <div class="tile"><div class="v">${n(['QUEUED', 'PROCESSING', 'FAILED'])}</div><div class="l">в очереди</div></div>
+    <div class="tile warn"><div class="v">${n(['WAITING_USER'])}</div><div class="l">ждут вашего решения</div></div>
+    <div class="tile ok"><div class="v">${n(['PUBLISHED'])}</div><div class="l">опубликовано всего</div></div>
+    <div class="tile"><div class="v">${L.min_interval_minutes} мин</div><div class="l">пауза между публикациями</div></div>`;
+}
+
+function account() {
+  const a = D.account, live = D.mode === 'live';
+  const steps = (a.steps || []).map(s => `<div class="s ${s.ok ? 'ok' : 'bad'}"><i>${s.ok ? '✓' : '✕'}</i><div><b>${esc(s.name)}</b><br><span>${esc(s.detail)}</span></div></div>`).join('');
+  $('#account').innerHTML = `
+    <h2>Подключение Instagram</h2>
+    <div class="row" style="margin-top:10px">${a.ok ? `<span class="badge ok">подключён</span><b>@${esc(a.username || '')}</b>` :
+      a.missing.length ? '<span class="badge warn">нужен токен</span>' : '<span class="badge err">не подключён</span>'}</div>
+    ${a.missing.length ? `<p class="small muted">Не хватает в <code>.env</code>: ${a.missing.map(m => `<code>${m}</code>`).join(' ')}. Вставьте ниже — они запишутся в <code>.env</code> на этом Mac. Пока их нет, очередь проверяется в режиме dry-run.</p>` : ''}
+    ${steps ? `<div class="steps">${steps}</div><div class="small muted">Проверено ${fmtLocal(a.checked_at)}</div>` : ''}
+    <dl class="kv" style="margin-top:10px">
+      <dt>Срок токена</dt><dd>${a.token_expires_at ? fmtLocal(a.token_expires_at) : a.token_type ? 'бессрочный' : '<span class="muted">неизвестен (нужны META_APP_ID и META_APP_SECRET)</span>'}</dd>
+      ${a.quota_total ? `<dt>Лимит Meta</dt><dd>${a.quota_usage} из ${a.quota_total} за 24 ч</dd>` : ''}
+    </dl>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary sm" id="checkBtn">Проверить подключение</button>
+      <button class="btn sm" id="refreshBtn" ${a.can_refresh && !a.missing.includes('META_ACCESS_TOKEN') ? '' : 'disabled'} title="${a.can_refresh ? 'Обменять долгий токен на новый (≈60 дней)' : 'Нужны META_APP_ID и META_APP_SECRET в .env'}">Обновить токен</button>
+    </div>
+    <div style="border-top:1px solid var(--line);margin:16px 0 12px"></div>
+    <div class="stack" style="gap:10px">
+      <label class="field">Токен доступа Meta (не показывается после сохранения)<input type="password" id="tok" autocomplete="off" placeholder="${a.missing.includes('META_ACCESS_TOKEN') ? 'вставьте токен' : 'сохранён — вставьте, чтобы заменить'}"></label>
+      <label class="field">ID аккаунта Instagram<div class="row" style="flex-wrap:nowrap"><input type="text" id="accId" placeholder="${a.missing.includes('INSTAGRAM_ACCOUNT_ID') ? '1784…' : 'сохранён'}" style="flex:1;min-width:0"><button class="btn sm" id="findBtn" ${a.missing.includes('META_ACCESS_TOKEN') ? 'disabled title="сначала токен"' : ''}>Найти</button></div></label>
+      <div id="found"></div>
+      <button class="btn" id="saveCreds">Сохранить и проверить</button>
+    </div>
+    <div style="border-top:1px solid var(--line);margin:16px 0 12px"></div>
+    <b style="font-size:13px">Режим</b>
+    <p class="small muted" style="margin:4px 0 8px">${live ? 'Ролики из очереди отправляются в Instagram по расписанию и лимитам.' : 'Dry-run: завод проходит весь путь (проверки, формат, права, время), но в Instagram ничего не отправляет.'}</p>
+    ${live ? '<button class="btn danger sm" id="modeBtn">Вернуться в dry-run</button>' :
+      `<button class="btn ok sm" id="modeBtn" ${a.ok ? '' : 'disabled'} title="${a.ok ? '' : 'Сначала подключите Instagram'}">Включить реальную публикацию</button>`}`;
+  $('#checkBtn').onclick = async () => { $('#checkBtn').disabled = true; const r = await api('/api/instagram/check', { method: 'POST' }).catch(e => toast(e.message, 'err')); if (r) toast(r.ok ? 'Instagram подключён' : 'Подключение не прошло проверку', r.ok ? 'ok' : 'err'); load(true); };
+  $('#refreshBtn').onclick = async () => { try { const r = await api('/api/instagram/refresh-token', { method: 'POST' }); toast(r.refreshed ? 'Токен обновлён' : r.reason, 'ok'); load(true); } catch (e) { toast(e.message, 'err'); } };
+  $('#saveCreds').onclick = async () => {
+    const token = $('#tok').value.trim(), account_id = $('#accId').value.trim();
+    try { const r = await api('/api/instagram/credentials', { method: 'POST', body: JSON.stringify({ token: token || null, account_id: account_id || null }) });
+      toast(r.ok ? 'Сохранено, Instagram подключён' : 'Сохранено, но проверка не прошла — см. список', r.ok ? 'ok' : 'err'); load(true);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $('#findBtn').onclick = async () => {
+    try { const r = await api('/api/instagram/accounts');
+      $('#found').innerHTML = r.accounts.length ? r.accounts.map(x => `<button class="chip" data-id="${x.id}">@${esc(x.username)} · ${esc(x.page)}</button>`).join(' ') : '<span class="small muted">К страницам Facebook этого токена не привязан профессиональный аккаунт Instagram.</span>';
+      $$('#found .chip').forEach(b => b.onclick = () => { $('#accId').value = b.dataset.id; });
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $('#modeBtn').onclick = async () => {
+    if (!live && !confirm('Включить реальную публикацию? Ролики из очереди начнут уходить в Instagram по расписанию.')) return;
+    try { await api('/api/publishing-settings/live', { method: 'POST', body: JSON.stringify({ value: !live }) }); toast(live ? 'Режим dry-run' : 'Реальная публикация включена', 'ok'); load(true); } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+function ready() {
+  $('#readyCount').textContent = D.ready.length ? `${D.ready.length} ${plural(D.ready.length, 'ролик', 'ролика', 'роликов')}` : '';
+  $('#ready').innerHTML = D.ready.length ? D.ready.map(i => `<div class="mini" data-id="${i.id}" title="Поставить в очередь"><img loading="lazy" src="${i.thumbnail}" alt=""><div>${esc(i.title || '#' + i.id)}</div></div>`).join('')
+    : '<div class="muted small" style="grid-column:1/-1">Готовых роликов нет. Сюда попадают смонтированные ролики с подтверждёнными правами (после одобрения на странице «Ролики»).</div>';
+}
+
+function pubRow(p) {
+  const when = p.status === 'PUBLISHED' ? `опубликован ${fmtLocal(p.published_at)}` : p.status === 'FAILED' ? `повтор ${fmtLocal(p.next_retry_at)}` :
+    p.eta ? `отправка ≈ ${fmtLocal(p.eta)}${p.scheduled_at ? ' (по расписанию)' : ''}` : '';
+  const editable = ['QUEUED', 'FAILED', 'WAITING_USER'].includes(p.status);
+  const dry = p.dry_run && ['QUEUED', 'FAILED'].includes(p.status) ? `<div class="drybox">Dry-run ${fmtLocal(p.dry_run_at)}: ${p.dry_run.ready ? 'ролик, описание и права готовы' : 'есть проблемы'}${p.dry_run.checks.some(c => !c.ok) ? '. Не пройдено: ' + p.dry_run.checks.filter(c => !c.ok).map(c => esc(c.name + ' (' + c.detail + ')')).join('; ') : ', все проверки пройдены'}. В Instagram не отправлялось.</div>` : '';
+  return `<div class="qrow" data-id="${p.id}">
+    <img loading="lazy" src="${p.thumbnail}" alt="">
+    <div>
+      <div class="row" style="gap:6px;margin-bottom:4px">${pubBadge(p.status)}<span class="small muted">#${p.id} · ролик #${p.content_id} · попыток ${p.attempts}/${p.max_retries}</span></div>
+      <div class="cap">${esc(p.caption)}</div>
+      <div class="small muted" style="margin-top:4px">${when}${p.permalink ? ` · <a href="${esc(p.permalink)}" target="_blank" rel="noopener">открыть в Instagram</a>` : ''}${p.external_id ? ` · ID ${esc(p.external_id)}` : ''}</div>
+      ${p.error && p.status !== 'PUBLISHED' ? `<div class="errbox"><b>Причина:</b> ${esc(p.error)}<br>
+        ${p.error_http_status ? `HTTP <code>${p.error_http_status}</code> · ` : ''}${p.error_code ? `код API <code>${esc(p.error_code)}</code> · ` : ''}${p.error_request_id ? `request ID <code>${esc(p.error_request_id)}</code> · ` : ''}${fmtLocal(p.error_at)}</div>` : ''}
+      ${dry}
+    </div>
+    <div class="acts">
+      ${editable ? `<button class="btn sm" data-act="edit">Изменить</button>` : ''}
+      ${['QUEUED', 'FAILED'].includes(p.status) ? `<button class="btn sm" data-act="dry-run">Dry-run</button>` : ''}
+      ${p.status === 'QUEUED' && p.scheduled_at ? `<button class="btn sm" data-act="now" title="Убрать время: отправить как можно скорее (лимиты и пауза соблюдаются)">Не ждать</button>` : ''}
+      ${['FAILED', 'WAITING_USER'].includes(p.status) ? `<button class="btn sm primary" data-act="retry">Повторить</button>` : ''}
+      ${editable ? `<button class="btn sm danger" data-act="cancel">Отменить</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function queue() {
+  $('#tabs').innerHTML = Object.entries(TABS).map(([k, [t, st]]) => `<button class="chip ${k === tab ? 'on' : ''}" data-t="${k}">${t}<span class="n">${D.publications.filter(p => st.includes(p.status)).length}</span></button>`).join('');
+  const rows = D.publications.filter(p => TABS[tab][1].includes(p.status));
+  if (tab === 'active') rows.sort((a, b) => (a.eta || a.next_retry_at || '9').localeCompare(b.eta || b.next_retry_at || '9'));
+  $('#queue').innerHTML = rows.length ? rows.map(pubRow).join('') : `<div class="empty"><div class="big">📭</div><b>Пусто</b>${tab === 'active' ? 'Выберите ролик в «Готово к публикации», напишите описание и подтвердите права.' : ''}</div>`;
+}
+
+async function load(force = false) {
+  D = await api('/api/publishing');
+  const key = JSON.stringify(D);
+  if (!force && key === lastKey) return;
+  lastKey = key;
+  headActions(); tiles(); ready(); queue();
+  if (!document.activeElement || !$('#account').contains(document.activeElement)) account();
+}
+
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+
+// Enqueue (item) or edit (publication) dialog.
+async function openDialog({ item, pub }) {
+  modalOpen = true;
+  const id = item ? item.id : pub.content_id;
+  const detail = await api('/api/items/' + id);
+  const caption = pub ? pub.caption : (detail.description || '');
+  const a = D.account;
+  $('#modal').innerHTML = `
+    <div class="player"><video src="${detail.video}" controls muted playsinline></video></div>
+    <div class="info">
+      <button class="btn ghost x" id="close">✕</button>
+      <div><h2>${pub ? 'Публикация #' + pub.id : 'В очередь Instagram Reels'}</h2><div class="small muted">${esc(detail.title || 'ролик #' + id)}</div></div>
+      <div><b style="font-size:13px">Описание</b><div id="descBox" style="margin-top:6px"></div></div>
+      <div><b style="font-size:13px">Когда</b>
+        <div class="row" style="margin-top:6px">
+          <label class="row" style="gap:6px"><input type="radio" name="when" value="asap" ${pub && pub.scheduled_at ? '' : 'checked'}> как можно скорее</label>
+          <label class="row" style="gap:6px"><input type="radio" name="when" value="at" ${pub && pub.scheduled_at ? 'checked' : ''}> не раньше</label>
+          <input type="datetime-local" id="at" value="${toLocalInput(pub && pub.scheduled_at)}">
+        </div>
+        <div class="small muted" style="margin-top:4px">Время по ${esc(D.timezone)}. Учитываются лимит ${D.limits.daily_limit} в день и пауза ${D.limits.min_interval_minutes} мин.</div>
+      </div>
+      ${pub ? '' : `<div class="check-list">
+        <div>✓ Видео готово (9:16, смонтировано)</div>
+        <div>${detail.rights ? '✓' : '✕'} Права: <b>${esc(detail.rights)}</b>${detail.license ? ' · ' + esc(detail.license) : ''}</div>
+        <div>${detail.source_url && detail.source_url.startsWith('http') ? `Источник: <a href="${esc(detail.source_url)}" target="_blank" rel="noopener">${esc(detail.source_url)}</a>` : 'Источник: ' + esc(detail.source)}</div>
+        <div>${a.ok ? '✓ Instagram подключён: @' + esc(a.username || '') : '• Instagram не подключён: ролик будет проверяться в dry-run'}</div>
+      </div>
+      <label class="confirm"><input type="checkbox" id="rights"> <span>Я проверил права на этот ролик и разрешаю его опубликовать. Без этой отметки в очередь нельзя.</span></label>`}
+      <div class="row"><span class="spacer"></span><button class="btn" id="cancelDlg">Закрыть</button><button class="btn primary" id="submit">${pub ? 'Сохранить' : 'Поставить в очередь'}</button></div>
+    </div>`;
+  $('#modalBg').classList.add('open');
+  const ta = await descEditor($('#descBox'), caption);
+  $('#at').onfocus = () => { $('input[name=when][value=at]').checked = true; };
+  $('#close').onclick = $('#cancelDlg').onclick = closeModal;
+  $('#submit').onclick = async () => {
+    const at = $('input[name=when]:checked').value === 'at' ? $('#at').value : null;
+    if ($('input[name=when]:checked').value === 'at' && !at) return toast('Укажите время', 'err');
+    try {
+      if (pub) {
+        await api('/api/publishing/' + pub.id, { method: 'PATCH', body: JSON.stringify({ caption: ta.value, scheduled_at: at, asap: !at }) });
+        toast('Сохранено', 'ok');
+      } else {
+        await api('/api/publishing/queue', { method: 'POST', body: JSON.stringify({ content_id: id, caption: ta.value, scheduled_at: at, rights_confirmed: $('#rights').checked }) });
+        toast('Ролик в очереди', 'ok');
+      }
+      closeModal(); load(true);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+function closeModal() { $('#modalBg').classList.remove('open'); $('#modal').innerHTML = ''; modalOpen = false; }
+
+$('#ready').addEventListener('click', e => { const c = e.target.closest('.mini'); if (c) openDialog({ item: { id: +c.dataset.id } }); });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { tab = b.dataset.t; queue(); } });
+$('#queue').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const id = +b.closest('.qrow').dataset.id, act = b.dataset.act, pub = D.publications.find(p => p.id === id);
+  if (act === 'edit') return openDialog({ pub });
+  if (act === 'cancel' && !confirm('Отменить публикацию? Ролик вернётся в «Готово к публикации».')) return;
+  try {
+    const r = await api(`/api/publishing/${id}/${act}`, { method: 'POST' });
+    toast(act === 'dry-run' ? (r.plan.ready ? 'Dry-run: всё готово, ничего не отправлено' : 'Dry-run: есть проблемы, см. карточку') :
+      { cancel: 'Отменено', retry: 'Будет повтор', now: 'Отправится как можно скорее' }[act], act === 'dry-run' && !r.plan.ready ? 'err' : 'ok');
+    load(true);
+  } catch (err) { toast(err.message, 'err'); }
+});
+$('#modalBg').addEventListener('click', e => { if (e.target.id === 'modalBg') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && modalOpen) closeModal(); });
+
+renderSidebar('publish');
+load(true).then(() => {
+  const want = new URLSearchParams(location.search).get('item');
+  if (want && D.ready.some(i => i.id === +want)) openDialog({ item: { id: +want } });
+});
+setInterval(() => { if (!modalOpen) load(); }, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Редактор — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+<style>
+  .ed { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 22px; align-items: start; }
+  .stage-wrap { position: sticky; top: 16px; display: grid; gap: 10px; }
+  .stage { position: relative; width: 360px; height: 640px; border-radius: 14px; overflow: hidden; background: #0f1218;
+           box-shadow: var(--shadow); user-select: none; touch-action: none; }
+  .stage canvas, .stage img.exact { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stage img.exact { pointer-events: none; }
+  .ov { position: absolute; inset: 0; }
+  .box { position: absolute; border: 1.5px dashed rgba(255,255,255,.55); border-radius: 3px; cursor: move; }
+  .box:hover { border-color: #fff; }
+  .box.sel { border: 2px solid var(--c); }
+  .box .tag { position: absolute; top: -19px; left: -2px; font-size: 10px; font-weight: 700; color: #fff; padding: 1px 6px; border-radius: 4px; white-space: nowrap; background: var(--c); display: none; }
+  .box.sel .tag { display: block; }
+  .box .h { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--c); display: none; }
+  .box.sel .h { display: block; }
+  .h.nw { left: -7px; top: -7px; cursor: nwse-resize; } .h.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+  .h.ne { right: -7px; top: -7px; cursor: nesw-resize; } .h.sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+  .h.n, .h.s { left: calc(50% - 6px); border-radius: 3px; cursor: ns-resize; } .h.n { top: -7px; } .h.s { bottom: -7px; }
+  .h.e, .h.w { top: calc(50% - 6px); border-radius: 3px; cursor: ew-resize; } .h.e { right: -7px; } .h.w { left: -7px; }
+  .box.video { --c: #0ea5e9; } .box.banner { --c: #db2777; } .box.text { --c: #ca8a04; }
+  .box.empty-text { border-color: rgba(250, 204, 21, .9); background: rgba(250, 204, 21, .12); }
+  .box.empty-text::after { content: 'текст: нажмите и введите'; position: absolute; inset: 0; display: grid; place-items: center; color: #fde68a; font-size: 11px; font-weight: 600; }
+  .guide { position: absolute; background: #f472b6; pointer-events: none; display: none; }
+  .guide.v { width: 1px; top: 0; bottom: 0; left: 50%; } .guide.hz { height: 1px; left: 0; right: 0; top: 50%; }
+  .stage.playing .ov { opacity: .25; }
+  .stage .fallback { position: absolute; inset: auto 8px 8px 8px; font-size: 11px; color: #fff; background: rgba(0,0,0,.6); border-radius: 6px; padding: 4px 8px; }
+  .transport { display: flex; gap: 8px; align-items: center; }
+  .transport input { flex: 1; }
+  .transport .btn { width: 44px; }
+  .pos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .pos .btn { padding: 6px 4px; font-size: 12px; }
+  .panel { display: grid; gap: 12px; }
+  details.sec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
+  details.sec summary { padding: 13px 16px; font-weight: 650; cursor: pointer; list-style: none; display: flex; justify-content: space-between; }
+  details.sec summary::-webkit-details-marker { display: none; }
+  details.sec summary::after { content: '▾'; color: var(--muted); }
+  details.sec[open] summary::after { content: '▴'; }
+  details.more summary { color: var(--text-2); font-weight: 600; }
+  .sec .body { padding: 0 16px 16px; display: grid; gap: 12px; }
+  .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .sl { display: grid; gap: 2px; font-size: 12px; color: var(--text-2); font-weight: 500; }
+  .sl .top { display: flex; justify-content: space-between; } .sl .top span { color: var(--muted); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=color] { width: 44px; height: 32px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface); padding: 2px; cursor: pointer; }
+  .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+  .seg button { font: inherit; font-size: 12px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
+  .tpl { border: 2px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; background: var(--surface); padding: 0; font: inherit; text-align: left; }
+  .tpl:hover { border-color: var(--accent); }
+  .tpl.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+  .tpl canvas { width: 100%; aspect-ratio: 9/16; display: block; background: #0f1218; }
+  .tpl div { font-size: 11px; line-height: 1.25; padding: 5px 6px; height: 38px; overflow: hidden; color: var(--text-2); }
+  .assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; }
+  .asset { border: 2px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; background: repeating-conic-gradient(#e5e7eb 0 25%, #fff 0 50%) 0 0/12px 12px; aspect-ratio: 9/16; position: relative; }
+  .asset img { width: 100%; height: 100%; object-fit: contain; }
+  .asset.on { border-color: var(--accent); }
+  .asset .k { position: absolute; bottom: 2px; left: 2px; font-size: 9px; background: rgba(0,0,0,.6); color: #fff; padding: 0 4px; border-radius: 3px; }
+  .note { font-size: 12px; color: var(--muted); margin: 0; }
+  .warnbox { font-size: 12px; background: var(--warn-bg); color: #7a4a06; border-radius: 8px; padding: 8px 10px; }
+  .tcard { border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+  .tcard.sel { border-color: #ca8a04; box-shadow: 0 0 0 3px #fef3c7; }
+  .tcard textarea { min-height: 54px; }
+  .trim { position: relative; height: 34px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line-2); }
+  .trim .keep { position: absolute; top: 0; bottom: 0; background: var(--accent-2); border-left: 3px solid var(--accent); border-right: 3px solid var(--accent); cursor: grab; }
+  .trim .hd { position: absolute; top: -2px; bottom: -2px; width: 12px; margin-left: -6px; cursor: ew-resize; z-index: 2; }
+  .trim .ph { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--err); pointer-events: none; }
+  .substyles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .substyle { border: 2px solid var(--line); border-radius: 10px; padding: 0; background: #3a4150; cursor: pointer; overflow: hidden; font: inherit; }
+  .substyle canvas { width: 100%; display: block; }
+  .substyle span { display: block; font-size: 11px; padding: 3px; background: var(--surface); color: var(--text-2); }
+  .substyle.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+  .box.subs { --c: #16a34a; cursor: ns-resize; }
+  .pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .pick { position: relative; border-radius: 12px; overflow: hidden; border: 2px solid var(--line); background: var(--surface); cursor: pointer; }
+  .pick img { width: 100%; aspect-ratio: 9/16; object-fit: cover; display: block; background: var(--surface-2); }
+  .pick .cap { padding: 6px 8px; font-size: 12px; display: grid; gap: 4px; }
+  .pick .cap div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pick input { position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; z-index: 2; }
+  .pick.sel { border-color: var(--accent); }
+  @media (max-width: 1000px) { .ed { grid-template-columns: 1fr; } .stage-wrap { position: static; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main id="main"></main>
+</div>
+<script src="/static/app.js?v=20"></script>
+<script src="/static/compose.js?v=3"></script>
+<script>
+const D = 360 / 1080;  // stage display scale (spec pixels → screen pixels)
+const itemId = +new URLSearchParams(location.search).get('item') || null;
+let P = null, S = null, ASSETS = [], TEMPLATES = [], at = 1.0, dirty = false, sel = { kind: 'video' };
+let VOICES = [], voiceAudio = null;
+const SUB_STYLES = {
+  classic: { label: 'Классика', font: 'heavy', color: '#ffffff', stroke: 0.10, stroke_color: '#000000', box: false, karaoke: false, uppercase: false },
+  karaoke: { label: 'Караоке', font: 'heavy', color: '#ffffff', stroke: 0.10, stroke_color: '#000000', box: false, karaoke: true, highlight: '#ffd600', uppercase: false },
+  box: { label: 'Плашка', font: 'regular', color: '#ffffff', stroke: 0, box: true, box_color: '#000000b0', karaoke: false, uppercase: false },
+  white_box: { label: 'Белая плашка', font: 'heavy', color: '#111111', stroke: 0, box: true, box_color: '#ffffffee', karaoke: false, uppercase: false },
+  impact: { label: 'Мем Impact', font: 'impact', color: '#ffffff', stroke: 0.12, stroke_color: '#000000', box: false, karaoke: false, uppercase: true },
+  yellow: { label: 'Жёлтые', font: 'heavy', color: '#ffd600', stroke: 0.10, stroke_color: '#000000', box: false, karaoke: false, uppercase: false },
+  neon: { label: 'Неон', font: 'rounded', color: '#7cff4f', stroke: 0.08, stroke_color: '#06320b', box: false, karaoke: true, highlight: '#ffffff', uppercase: false },
+};
+let comp = null, media = null, playing = false, saveTimer = null, exactTimer = null, exactSeq = 0;
+
+const get = (o, path) => path.split('.').reduce((a, k) => a == null ? a : a[k], o);
+const set = (o, path, v) => { const ks = path.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
+const clone = o => JSON.parse(JSON.stringify(o));
+const total = () => totalDuration(S, P.item.duration);
+const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+
+// ================= picker (no item): open a video, or a template for many at once =================
+let pickState = { onlyNew: true, checked: false, txt: '', cat: '', chosen: new Set(), last: null, items: [] };
+async function picker() {
+  renderSidebar('editor');
+  const [tpls, auto] = await Promise.all([api('/api/editor/templates'), api('/api/editor/auto-templates')]);
+  TEMPLATES = tpls.templates;
+  $('#main').innerHTML = `
+    <div class="page-head"><div><h1>Редактор</h1>
+      <p class="sub">Нажмите на ролик, чтобы открыть его. Для пачки: отметьте ролики (Shift — диапазон), выберите шаблон и отправьте в «Готовые».</p></div></div>
+    <section class="card" style="margin-bottom:14px;display:grid;gap:10px">
+      <div class="row">
+        <select id="tpl" style="min-width:260px">${TEMPLATES.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
+        <select id="bgSel" style="min-width:200px"><option value="">фон как в шаблоне</option><option value="random">🎲 каждому случайный неиспользованный фон</option></select>
+        <button class="btn primary" id="apply" disabled>Шаблон и в «Готовые»</button>
+        <span class="spacer"></span><button class="btn ghost sm" id="all">выбрать все</button><button class="btn ghost sm" id="none">снять</button><span class="muted small" id="selN">выбрано: 0</span>
+      </div>
+      <div id="progress" class="small muted"></div>
+    </section>
+    <div class="row" style="margin-bottom:12px"><div class="chips" id="filt"></div><span class="spacer"></span>
+      <details class="sec" style="box-shadow:none"><summary style="padding:6px 12px">⚙️ Авто-шаблоны по категориям</summary><div class="body" id="auto" style="min-width:360px"></div></details></div>
+    <div class="pick-grid" id="grid"></div>`;
+  renderAuto(auto.mapping);
+  api('/api/backgrounds?used=').then(b => { $('#bgSel').innerHTML += b.items.map(x => `<option value="${x.id}">🖼 ${esc(x.name)}${x.use_count ? ' (✓' + x.use_count + ')' : ''}</option>`).join(''); }).catch(() => {});
+  $('#grid').addEventListener('click', e => {
+    const card = e.target.closest('.pick'); if (!card) return;
+    const id = +card.dataset.id, box = e.target.closest('input[type=checkbox]');
+    if (!box && !e.shiftKey && !e.metaKey) { location.href = '/editor?item=' + id; return; }
+    e.preventDefault();
+    const ids = pickState.items.map(i => i.id), on = !pickState.chosen.has(id);
+    if (e.shiftKey && pickState.last != null) {
+      const [a, b] = [ids.indexOf(pickState.last), ids.indexOf(id)].sort((x, y) => x - y);
+      ids.slice(a, b + 1).forEach(x => on ? pickState.chosen.add(x) : pickState.chosen.delete(x));
+    } else on ? pickState.chosen.add(id) : pickState.chosen.delete(id);
+    pickState.last = id; markChosen();
+  });
+  $('#all').onclick = () => { pickState.items.forEach(i => pickState.chosen.add(i.id)); markChosen(); };
+  $('#none').onclick = () => { pickState.chosen.clear(); markChosen(); };
+  $('#apply').onclick = async () => {
+    try { const r = await api(`/api/editor/templates/${$('#tpl').value}/apply`, { method: 'POST', body: JSON.stringify({ item_ids: [...pickState.chosen], export: true, background: $('#bgSel').value || null }) });
+      const bad = Object.keys(r.errors).length;
+      toast(`В очереди на монтаж: ${r.applied.length}${bad ? `, не получилось: ${bad} (${Object.values(r.errors)[0]})` : ''}`, bad ? 'err' : 'ok');
+      pickState.chosen.clear(); loadPick();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  await loadPick();
+  setInterval(progress, 2500); progress();
+}
+
+async function loadPick() {
+  const qs = new URLSearchParams(); if (pickState.onlyNew) qs.set('only_new', 'true'); if (pickState.checked) qs.set('checked_channels', 'true');
+  const all = (await api('/api/editor/items?' + qs)).items;
+  pickState.items = all.filter(i => (!pickState.cat || i.category === pickState.cat) && (!pickState.txt || (pickState.txt === 'yes') === !!i.has_text));
+  const cats = {}; all.forEach(i => cats[i.category] = (cats[i.category] || 0) + 1);
+  $('#filt').innerHTML = `<button class="chip ${pickState.onlyNew ? 'on' : ''}" data-new="1">Новые</button><button class="chip ${pickState.onlyNew ? '' : 'on'}" data-new="0">Все</button>
+    <button class="chip ${pickState.txt === 'no' ? 'on' : ''}" data-txt="no" title="без надписей в кадре">без текста</button><button class="chip ${pickState.txt === 'yes' ? 'on' : ''}" data-txt="yes">🔤 с текстом</button>
+    <button class="chip ${pickState.checked ? 'on' : ''}" data-checked="1" title="Только с каналов, отмеченных сейчас в «Источниках»">✓ отмеченные каналы</button>
+    <span style="width:10px"></span><button class="chip ${pickState.cat ? '' : 'on'}" data-cat="">Все категории<span class="n">${all.length}</span></button>` +
+    Object.entries(cats).map(([c, n]) => `<button class="chip ${pickState.cat === c ? 'on' : ''}" data-cat="${c}">${esc((CATEGORIES.find(x => x.id === c) || {}).label || c || '—')}<span class="n">${n}</span></button>`).join('');
+  $$('#filt [data-new]').forEach(b => b.onclick = () => { pickState.onlyNew = b.dataset.new === '1'; loadPick(); });
+  $$('#filt [data-txt]').forEach(b => b.onclick = () => { pickState.txt = pickState.txt === b.dataset.txt ? '' : b.dataset.txt; loadPick(); });
+  $$('#filt [data-checked]').forEach(b => b.onclick = () => { pickState.checked = !pickState.checked; loadPick(); });
+  $$('#filt [data-cat]').forEach(b => b.onclick = () => { pickState.cat = b.dataset.cat; loadPick(); });
+  $('#grid').innerHTML = pickState.items.map(i => `
+      <div class="pick" data-id="${i.id}">
+        <input type="checkbox" data-id="${i.id}">
+        <img loading="lazy" src="${i.thumbnail}" alt="">
+        <div class="cap"><div><b>${esc(i.title || '#' + i.id)}</b></div>
+          <div class="row" style="gap:4px">${catBadge(i.category, i.category_label)}<span class="st" data-st="${i.id}">${stBadge(i.edit_state)}</span>${i.has_text == null ? '' : i.has_text ? `<span class="badge info" title="${esc('В кадре: ' + (i.screen_text || ''))}">🔤 текст</span>` : '<span class="badge">без текста</span>'}${i.in_ready ? '<span class="badge ok">в «Готовых»</span>' : ''}</div></div>
+      </div>`).join('') || `<div class="card empty" style="grid-column:1/-1"><b>${pickState.onlyNew ? 'Новых роликов нет' : 'Роликов пока нет'}</b>${pickState.onlyNew ? 'Всё уже в «Готовых». Нажмите «Все», чтобы увидеть остальные.' : 'Сюда попадают скачанные и разобранные ролики.'}</div>`;
+  markChosen();
+}
+const stBadge = st => st ? `<span class="badge ${st === 'done' ? 'ok' : st === 'error' ? 'err' : 'info'}">${{ queued: 'в очереди', rendering: 'монтаж…', done: 'смонтирован', error: 'ошибка' }[st]}</span>` : '';
+function markChosen() {
+  $$('.pick').forEach(c => { const on = pickState.chosen.has(+c.dataset.id); c.classList.toggle('sel', on); $('input', c).checked = on; });
+  $('#selN').textContent = 'выбрано: ' + pickState.chosen.size; $('#apply').disabled = !pickState.chosen.size || !TEMPLATES.length;
+}
+async function progress() {
+  try {
+    const q = await api('/api/editor/queue');
+    const left = q.queued + q.rendering;
+    $('#progress').innerHTML = left ? `<span class="dot busy"></span>Монтаж в фоне: осталось <b>${left}</b>${q.error ? `, ошибок: ${q.error}` : ''}. Готовые ролики сами появляются в «Готовых».` : (q.error ? `<span style="color:var(--err)">Ошибок монтажа: ${q.error} — откройте ролик, чтобы увидеть причину.</span>` : '');
+    $$('[data-st]').forEach(el => { const st = q.items[el.dataset.st]; if (st) el.innerHTML = stBadge(st); else if (/очереди|монтаж…/.test(el.textContent)) el.innerHTML = stBadge('done'); });
+  } catch { }
+}
+function renderAuto(mapping) {
+  const cats = ['sports', 'stream_clips', 'memes', 'funny', 'gaming', 'animals'].map(id => CATEGORIES.find(c => c.id === id)).filter(Boolean);
+  $('#auto').innerHTML = `<p class="note">Новые ролики этой категории сами получают шаблон и уходят в «Готовые». Ролики, открытые в редакторе, не трогаются.</p>` +
+    cats.map(c => `<label class="row small" style="justify-content:space-between">${esc(c.label)}<select data-auto="${c.id}" style="width:230px"><option value="">выключено</option>${TEMPLATES.map(t => `<option value="${t.id}" ${mapping[c.id] === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>`).join('');
+  $$('[data-auto]').forEach(s => s.onchange = async () => {
+    const m = {}; $$('[data-auto]').forEach(x => m[x.dataset.auto] = x.value ? +x.value : null);
+    try { await api('/api/editor/auto-templates', { method: 'PUT', body: JSON.stringify({ mapping: m }) }); toast(s.value ? 'Авто-шаблон включён' : 'Авто-шаблон выключен', 'ok'); } catch (e) { toast(e.message, 'err'); }
+  });
+}
+
+// ================= controls =================
+const seg = (path, opts) => `<div class="seg" data-seg="${path}">${opts.map(([v, t]) => `<button type="button" data-v="${v}">${t}</button>`).join('')}</div>`;
+// slider: `fmt` turns the stored value into the label
+const rng = (path, label, min, max, step, unit = '') => `<label class="sl"><span class="top">${label}<span data-show="${path}" data-unit="${unit}"></span></span><input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}"></label>`;
+const col = (path, label) => `<label class="row small" style="gap:8px">${label}<input type="color" data-path="${path}"></label>`;
+const chk = (path, label) => `<label class="row small" style="gap:6px"><input type="checkbox" data-path="${path}"> ${label}</label>`;
+
+function assetPicker(kind, path, allowNone = true) {
+  const list = ASSETS.filter(a => kind.includes(a.kind)), cur = get(S, path);
+  return `<div class="assets" data-assets="${path}">
+    ${allowNone ? `<div class="asset ${cur ? '' : 'on'}" data-aid="" style="display:grid;place-items:center;background:var(--surface-2);font-size:12px;color:var(--muted)">нет</div>` : ''}
+    ${list.map(a => `<div class="asset ${a.id === cur ? 'on' : ''}" data-aid="${a.id}" title="${esc(a.name)}">${a.preview ? `<img src="${a.preview}" alt="">` : `<div style="display:grid;place-items:center;height:100%;font-size:11px;padding:4px;text-align:center">🎵 ${esc(a.name)}</div>`}<span class="k">${a.kind === 'video' ? 'видео' : a.kind === 'audio' ? 'звук' : ''}</span></div>`).join('')}
+  </div>
+  <label class="btn sm" style="justify-self:start">＋ Загрузить файл<input type="file" hidden data-upload="${path}" accept="${kind.includes('audio') ? 'audio/*' : 'image/*,video/*'}"></label>`;
+}
+
+// backgrounds from the «Фоны» library (used ones marked), then other uploaded pictures/videos
+function bgPicker() {
+  const cur = S.background.asset, lib = ASSETS.filter(a => a.role === 'background' && a.kind !== 'audio');
+  const other = ASSETS.filter(a => a.role !== 'background' && ['image', 'video'].includes(a.kind));
+  const tile = a => `<div class="asset ${a.id === cur ? 'on' : ''}" data-bg="${a.id}" title="${esc(a.name)}${a.use_count ? ' · использован ' + a.use_count + ' раз' : ''}"><img loading="lazy" src="${a.preview}" alt="">${a.use_count ? `<span class="k" style="left:auto;right:2px;background:#16a34a">✓${a.use_count}</span>` : ''}${a.kind === 'video' ? '<span class="k">видео</span>' : ''}</div>`;
+  return `<div class="assets" style="max-height:300px;overflow:auto">${lib.map(tile).join('') || '<p class="note" style="grid-column:1/-1">В «Фонах» пока пусто — загрузите туда картинки или видео.</p>'}</div>
+    ${other.length ? `<details><summary class="small muted" style="cursor:pointer">другие загруженные файлы (${other.length})</summary><div class="assets" style="margin-top:8px">${other.map(tile).join('')}</div></details>` : ''}`;
+}
+function setBackground(id) {
+  const a = ASSETS.find(x => x.id === id); if (!a) return;
+  Object.assign(S.background, { asset: id, type: a.kind === 'video' ? 'video' : 'image' });
+  $$('[data-bg]').forEach(t => t.classList.toggle('on', t.dataset.bg === id));
+  loadAsset(a).then(() => { seek(); redraw(); });
+  changed();
+}
+
+function textCards() {
+  return S.texts.map((t, i) => `<div class="tcard ${sel.kind === 'text' && sel.i === i ? 'sel' : ''}" data-tcard="${i}">
+    <div class="row" style="justify-content:space-between"><b class="small">Текст ${i + 1}</b><button class="btn ghost sm" data-deltext="${i}" title="Удалить">✕</button></div>
+    <textarea data-path="texts.${i}.text" placeholder="Например: «Когда в пятницу…»"></textarea>
+    ${rng(`texts.${i}.size`, 'Размер', 24, 200, 2)}
+    <div class="row">${col(`texts.${i}.color`, 'Цвет')}${chk(`texts.${i}.box`, 'плашка')}<span data-when="texts.${i}.box=true">${col(`texts.${i}.box_color`, '')}</span>
+      <span class="spacer"></span>${seg(`texts.${i}.align`, [['left', '⟸'], ['center', '≡'], ['right', '⟹']])}</div>
+  </div>`).join('');
+}
+
+function panels() {
+  const bannerA = ASSETS.find(a => a.id === S.banner.asset);
+  return `
+  <details class="sec" open><summary>Шаблоны</summary><div class="body">
+    <div class="tpls" id="tpls">${TEMPLATES.map(t => `<button class="tpl ${P.template_id === t.id ? 'on' : ''}" data-tpl="${t.id}" title="${esc(t.name)}"><canvas width="90" height="160"></canvas><div>${esc(t.name)}</div></button>`).join('')}</div>
+    <p class="note">Один клик — и оформление применено. Обрезка ролика при этом сохраняется.</p>
+  </div></details>
+
+  <details class="sec" open><summary>Окно видео</summary><div class="body">
+    ${rng('video._size', 'Размер', 20, 160, 1, '%')}
+    <div class="g2"><div><b class="small">Форма</b>${seg('video.shape', [['rect', 'Прямоугольник'], ['rounded', 'Скругления'], ['circle', 'Круг']])}</div>
+      <div><b class="small">Видео в окне</b>${seg('video.fit', [['contain', 'Целиком'], ['cover', 'Заполнить']])}</div></div>
+    <div data-when="video.shape=rounded">${rng('video.radius', 'Скругление', 0, 300, 2)}</div>
+    ${rng('video.zoom', 'Приблизить', 1, 3, 0.05, '×')}
+  </div></details>
+
+  <details class="sec" open><summary>Фон</summary><div class="body">
+    ${seg('background.type', [['blur', 'Размытие ролика'], ['color', 'Цвет'], ['gradient', 'Градиент'], ['image', 'Из «Фонов»']])}
+    <div data-when="background.type=blur" class="g2">${rng('background.blur', 'Размытие', 0, 60, 1)}${rng('background.darken', 'Затемнение', 0, 0.9, 0.05)}</div>
+    <div data-when="background.type=color">${col('background.color', 'Цвет фона')}</div>
+    <div data-when="background.type=gradient" class="row">${col('background.color', 'Цвет 1')}${col('background.color2', 'Цвет 2')}<div style="flex:1">${rng('background.angle', 'Угол', 0, 360, 5, '°')}</div></div>
+    <div data-when="background.type=image,video" style="display:grid;gap:8px">
+      <div class="row"><button class="btn sm" id="randBg">🎲 Случайный неиспользованный</button><a class="small" href="/backgrounds" target="_blank">открыть «Фоны» ↗</a></div>
+      ${bgPicker()}</div>
+  </div></details>
+
+  <details class="sec" open><summary>Текст</summary><div class="body">
+    <div id="texts" style="display:grid;gap:10px"></div>
+    <button class="btn sm" id="addText" style="justify-self:start">＋ Добавить текст</button>
+  </div></details>
+
+  <details class="sec" ${bannerA ? 'open' : ''}><summary>Баннер и хромакей</summary><div class="body">
+    <p class="note">Своя картинка или видео поверх ролика (рамка) или под ним. Зелёный или синий фон убирается сам.</p>
+    ${assetPicker(['image', 'video'], 'banner.asset')}
+    <div data-when="banner.asset!=" style="display:grid;gap:12px">
+      ${seg('banner.layer', [['over', 'Над видео (рамка)'], ['under', 'Под видео']])}
+      ${rng('banner.scale', 'Размер', 0.1, 2, 0.01, '×')}
+      <div class="row">${chk('banner.chroma.enabled', '<b>Убрать хромакей</b>')}<span data-when="banner.chroma.enabled=true">${col('banner.chroma.color', '')}</span>
+        <span class="spacer"></span><button class="btn sm primary" id="fitWin">Вписать видео в окно</button></div>
+      <div data-when="banner.chroma.enabled=true" class="g2">${rng('banner.chroma.similarity', 'Допуск', 0.01, 0.6, 0.01)}${rng('banner.chroma.blend', 'Мягкий край', 0, 0.6, 0.01)}</div>
+    </div>
+  </div></details>
+
+  <details class="sec"><summary>Обрезка и скорость</summary><div class="body">
+    <div class="trim" id="trim"><div class="keep" id="keep"></div><div class="hd" id="hdA"></div><div class="hd" id="hdB"></div><div class="ph" id="ph"></div></div>
+    <div class="row small muted" style="justify-content:space-between"><span id="trimA"></span><span id="trimLen"></span><span id="trimB"></span></div>
+    ${rng('time.speed', 'Скорость', 0.5, 2, 0.05, '×')}
+  </div></details>
+
+  <details class="sec" ${P.item.has_subtitles ? 'open' : ''}><summary>Субтитры</summary><div class="body">
+    ${P.item.has_subtitles ? `${chk('subtitles.enabled', 'показывать субтитры из речи')}
+    <div data-when="subtitles.enabled=true" style="display:grid;gap:12px">
+      <div class="substyles">${Object.entries(SUB_STYLES).map(([k, v]) => `<button class="substyle ${S.subtitles.preset === k ? 'on' : ''}" data-substyle="${k}"><canvas width="160" height="64"></canvas><span>${v.label}</span></button>`).join('')}</div>
+      ${rng('subtitles.size', 'Размер', 32, 140, 2)}
+      <div class="row">${col('subtitles.color', 'Цвет')}<span data-when="subtitles.karaoke=true">${col('subtitles.highlight', 'Слово сейчас')}</span>
+        ${chk('subtitles.karaoke', 'подсвечивать слово')}${chk('subtitles.uppercase', 'ЗАГЛАВНЫЕ')}</div>
+      ${seg('subtitles.font', [['regular', 'Обычный'], ['heavy', 'Жирный'], ['impact', 'Impact'], ['rounded', 'Округлый']])}
+      <p class="note">Положение — перетащите субтитры на превью или кнопками «Верх / Центр / Низ» под ним.</p>
+    </div>` : '<p class="note">В этом ролике нет распознанной речи, субтитров не будет. Можно добавить озвучку ниже — текст озвучки субтитрами не показывается.</p>'}
+  </div></details>
+
+  <details class="sec" ${S.voice.enabled ? 'open' : ''}><summary>Озвучка</summary><div class="body">
+    ${chk('voice.enabled', 'добавить озвучку русским голосом')}
+    <div data-when="voice.enabled=true" style="display:grid;gap:12px">
+      <textarea data-path="voice.text" placeholder="Текст для озвучки"></textarea>
+      <div class="row"><select data-path="voice.voice" style="flex:1">${VOICES.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('') || '<option value="">голоса не установлены</option>'}</select>
+        <button class="btn sm" id="listen">▶ Прослушать</button></div>
+      <div class="g3">${rng('voice.speed', 'Скорость', 0.6, 1.6, 0.05, '×')}${rng('voice.volume', 'Громкость', 0, 2, 0.05, '×')}${rng('voice.duck', 'Оригинал под голосом', 0, 1, 0.05, '×')}</div>
+      <p class="note">Голос звучит с начала ролика. Всё синтезируется на этом Mac, без интернета.</p>
+    </div>
+  </div></details>
+
+  <details class="sec more"><summary>Дополнительно</summary><div class="body">
+    <b class="small">Обводка и тень окна</b>
+    <div class="row"><div style="flex:1">${rng('video.border_width', 'Обводка', 0, 60, 1, ' px')}</div>${col('video.border_color', '')}${chk('video.shadow', 'тень')}</div>
+    <b class="small">Начало ролика</b>
+    ${rng('time.start_delay', 'Сначала только фон', 0, 10, 0.1, ' с')}
+    ${seg('time.appear', [['none', 'Появляется сразу'], ['fade', 'Проявление'], ['slide_up', 'Выезд снизу']])}
+    <div data-when="time.appear!=none">${rng('time.appear_duration', 'Длительность появления', 0.1, 3, 0.1, ' с')}</div>
+    <b class="small">Звук</b>
+    ${rng('audio.volume', 'Громкость ролика', 0, 2, 0.05, '×')}
+    <span class="small muted">Фоновая музыка</span>${assetPicker(['audio'], 'audio.music')}
+    <div data-when="audio.music!=">${rng('audio.music_volume', 'Громкость музыки', 0, 1.5, 0.05, '×')}</div>
+    ${chk('audio.normalize', 'выровнять громкость (−14 LUFS)')}
+    <b class="small">Мои шаблоны</b>
+    <div class="row"><input type="text" id="tplName" placeholder="Название, например «Мем в рамке»" style="flex:1"><button class="btn sm" id="tplSave">Сохранить как шаблон</button></div>
+    <div class="row"><select id="tplDelSel" style="flex:1">${TEMPLATES.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select><button class="btn sm danger" id="tplDel">Удалить шаблон</button></div>
+    <b class="small">Прочее</b>
+    <div class="row">${'<label class="row small" style="gap:6px"><input type="checkbox" id="exactToggle" checked> на паузе показывать точный кадр FFmpeg</label>'}</div>
+    <button class="btn sm danger" id="reset" style="justify-self:start">Сбросить всё оформление ролика</button>
+  </div></details>`;
+}
+
+// ================= layout =================
+function editorLayout() {
+  const it = P.item;
+  $('#main').innerHTML = `
+    <div class="page-head"><div><h1>Редактор</h1><p class="sub"><a href="/editor">← все ролики</a> · #${it.id} ${esc(it.title || '')}</p></div>
+      <div class="row"><span class="small muted" id="state"></span>
+        <button class="btn" id="prev" title="Предыдущий ролик (←)">←</button><button class="btn" id="next" title="Следующий ролик (→)">→</button>
+        <button class="btn danger" id="trash" title="Убрать ролик в корзину (Delete)">🗑</button>
+        <button class="btn primary lg" id="export" title="Enter" ${it.can_export ? '' : 'disabled title="Права не одобрены: одобрите ролик на странице «Ролики»"'}>Сохранить и в «Готовые»</button></div></div>
+    <div class="ed">
+      <div class="stage-wrap">
+        <div class="stage" id="stage"><canvas id="cv" width="540" height="960"></canvas><img class="exact" id="exact" alt="" hidden>
+          <div class="ov" id="ov"></div><div class="guide v" id="gv"></div><div class="guide hz" id="gh"></div></div>
+        <div class="transport"><button class="btn" id="play" title="Пробел">▶</button><input type="range" id="t" min="0" step="0.02"><span class="small muted" id="tl" style="width:84px;text-align:right"></span></div>
+        <div class="pos" id="pos"><button class="btn" data-pos="center">Центр</button><button class="btn" data-pos="top">Верх</button><button class="btn" data-pos="bottom">Низ</button><button class="btn" data-pos="full">Весь экран</button></div>
+        <p class="note">Клавиши: Пробел — пуск, ← → — соседний ролик, Enter — в «Готовые» и дальше, Delete — в корзину, Alt+стрелки — сдвинуть слой.<br>Тяните окно мышью, за кружки в углах — размер, за квадратики по краям — форма. Кнопки выше двигают выбранный слой. Исходник ${it.width}×${it.height}.</p>
+      </div>
+      <div class="panel" id="panel"></div>
+    </div>`;
+  renderSidebar('editor');
+  renderPanel();
+}
+
+function renderPanel() {
+  const open = $$('#panel details').map(d => d.open);
+  $('#panel').innerHTML = panels();
+  if (open.length) $$('#panel details').forEach((d, i) => { if (i < open.length) d.open = open[i]; });
+  $('#texts').innerHTML = textCards();
+  bindPanel();
+  syncControls();
+  drawTemplateThumbs();
+}
+
+function syncControls() {
+  const vs = videoSize();
+  $$('[data-path]').forEach(el => {
+    const v = el.dataset.path === 'video._size' ? vs : get(S, el.dataset.path);
+    if (el.type === 'checkbox') el.checked = !!v;
+    else if (document.activeElement !== el) el.value = v ?? '';
+  });
+  $$('[data-show]').forEach(el => {
+    const v = el.dataset.show === 'video._size' ? vs : get(S, el.dataset.show);
+    el.textContent = typeof v === 'number' ? (Math.round(v * 100) / 100) + (el.dataset.unit || '') : '';
+  });
+  $$('[data-seg]').forEach(el => $$('button', el).forEach(b => b.classList.toggle('on', String(get(S, el.dataset.seg)) === b.dataset.v)));
+  $$('[data-when]').forEach(el => {
+    const neg = el.dataset.when.includes('!='), [path, vals] = el.dataset.when.split(/!?=/);
+    const hit = vals.split(',').includes(String(get(S, path) ?? ''));
+    el.hidden = neg ? hit : !hit;
+  });
+  $$('[data-assets]').forEach(el => $$('.asset', el).forEach(a => a.classList.toggle('on', (get(S, el.dataset.assets) || '') === a.dataset.aid)));
+  if ($('#texts') && $$('.tcard').length !== S.texts.length) { $('#texts').innerHTML = textCards(); bindPanel($('#texts')); syncControls(); return; }
+  $$('.tcard').forEach(c => c.classList.toggle('sel', sel.kind === 'text' && sel.i === +c.dataset.tcard));
+  const T = total();
+  at = Math.min(at, T);
+  $('#t').max = T.toFixed(2); $('#t').value = at; $('#tl').textContent = `${fmt(at)} / ${fmt(T)}`;
+  syncTrim();
+}
+
+// video size slider: width in % of the canvas width, keeping the window's proportions and centre
+function videoSize() { return Math.round(S.video.w / CW * 100); }
+function setVideoSize(p) {
+  const v = S.video, cx = v.x + v.w / 2, cy = v.y + v.h / 2, ratio = v.h / v.w;
+  v.w = even(CW * p / 100); v.h = even(v.w * ratio); v.x = Math.round(cx - v.w / 2); v.y = Math.round(cy - v.h / 2);
+}
+
+function changed(opts = {}) {
+  dirty = true; showState(); syncControls(); boxes(); redraw(); hideExact();
+  clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 900);
+  if (opts.thumbs) drawTemplateThumbs();
+  drawSubStyles();
+}
+
+function bindPanel(root = document) {
+  $$('[data-path]', root).forEach(el => {
+    const handler = () => {
+      let v = el.type === 'checkbox' ? el.checked : el.value;
+      if (el.type === 'range') v = +v;
+      if (el.dataset.path === 'video._size') setVideoSize(v); else set(S, el.dataset.path, v);
+      changed();
+    };
+    el.oninput = handler; el.onchange = null;
+    if (el.type === 'checkbox' || el.type === 'color') { el.oninput = null; el.onchange = handler; if (el.type === 'color') el.oninput = handler; }
+  });
+  $$('[data-seg]', root).forEach(el => el.onclick = e => { const b = e.target.closest('button'); if (!b) return; set(S, el.dataset.seg, b.dataset.v); changed(); });
+  $$('[data-assets]', root).forEach(el => el.onclick = e => {
+    const a = e.target.closest('.asset'); if (!a) return;
+    set(S, el.dataset.assets, a.dataset.aid || null);
+    const meta = ASSETS.find(x => x.id === a.dataset.aid);
+    if (el.dataset.assets === 'banner.asset' && meta && meta.key_color) { S.banner.chroma.enabled = true; S.banner.chroma.color = meta.key_color; toast('Нашёл хромакей ' + meta.key_color + ' — он будет убран', 'ok'); }
+    if (el.dataset.assets === 'banner.asset' && meta) sel = { kind: 'banner' };
+    loadAsset(meta).then(() => redraw());
+    changed();
+  });
+  $$('[data-upload]', root).forEach(inp => inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    toast('Загружаю ' + f.name + '…');
+    try {
+      const r = await fetch('/api/editor/assets', { method: 'POST', body: fd }); const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      ASSETS = (await api('/api/editor/assets')).assets;
+      set(S, inp.dataset.upload, j.id);
+      if (inp.dataset.upload === 'banner.asset') { sel = { kind: 'banner' }; if (j.key_color) { S.banner.chroma.enabled = true; S.banner.chroma.color = j.key_color; toast('Хромакей ' + j.key_color + ' найден и будет убран', 'ok'); } }
+      await loadAsset(ASSETS.find(a => a.id === j.id));
+      renderPanel(); changed();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $$('[data-deltext]', root).forEach(b => b.onclick = () => { S.texts.splice(+b.dataset.deltext, 1); sel = { kind: 'video' }; changed(); });
+  $$('[data-tcard]', root).forEach(c => c.onfocusin = () => { sel = { kind: 'text', i: +c.dataset.tcard }; boxes(); syncControls(); });
+  if (root !== document) return;
+  $$('[data-tpl]').forEach(b => b.onclick = () => applyTemplate(+b.dataset.tpl));
+  $$('[data-bg]').forEach(t => t.onclick = () => setBackground(t.dataset.bg));
+  if ($('#randBg')) $('#randBg').onclick = () => {
+    const lib = ASSETS.filter(a => a.role === 'background' && a.id !== S.background.asset);
+    if (!lib.length) return toast('В «Фонах» пока нет фонов', 'err');
+    const min = Math.min(...lib.map(a => a.use_count)), pool = lib.filter(a => a.use_count === min);
+    setBackground(pool[Math.floor(Math.random() * pool.length)].id);
+  };
+  $$('[data-substyle]').forEach(b => b.onclick = () => {
+    Object.assign(S.subtitles, SUB_STYLES[b.dataset.substyle], { preset: b.dataset.substyle }); delete S.subtitles.label;
+    $$('[data-substyle]').forEach(x => x.classList.toggle('on', x === b)); sel = { kind: 'subs' }; changed();
+  });
+  drawSubStyles();
+  const ven = $('[data-path="voice.enabled"]');
+  if (ven) ven.addEventListener('change', () => {
+    if (ven.checked && !S.voice.text.trim()) { S.voice.text = P.item.description || P.item.transcript || P.item.caption || ''; syncControls(); }
+    if (ven.checked && !VOICES.some(v => v.id === S.voice.voice) && VOICES.length) S.voice.voice = VOICES[0].id;
+  });
+  if ($('#listen')) $('#listen').onclick = async () => {
+    const b = $('#listen'); b.disabled = true; b.textContent = 'Синтезирую…';
+    try { const a = await voiceFile(); if (voiceAudio) voiceAudio.pause(); voiceAudio = new Audio(a.url); voiceAudio.volume = Math.min(1, S.voice.volume); voiceAudio.play(); }
+    catch (e) { toast(e.message, 'err'); } finally { b.disabled = false; b.textContent = '▶ Прослушать'; }
+  };
+  $('#addText').onclick = () => {
+    S.texts.push({ ...clone(TEXT_NEW), y: 200 + S.texts.length * 160 });
+    sel = { kind: 'text', i: S.texts.length - 1 }; changed();
+    setTimeout(() => $(`[data-path="texts.${sel.i}.text"]`)?.focus(), 30);
+  };
+  $('#fitWin').onclick = async () => { try { S = (await api('/api/editor/fit-window', { method: 'POST', body: JSON.stringify({ spec: S }) })).spec; sel = { kind: 'video' }; changed(); toast('Видео вписано в окно баннера', 'ok'); } catch (e) { toast(e.message, 'err'); } };
+  $('#tplSave').onclick = async () => { try { await api('/api/editor/templates', { method: 'POST', body: JSON.stringify({ name: $('#tplName').value, spec: S }) }); TEMPLATES = (await api('/api/editor/templates')).templates; toast('Шаблон сохранён', 'ok'); renderPanel(); } catch (e) { toast(e.message, 'err'); } };
+  $('#tplDel').onclick = async () => { const id = +$('#tplDelSel').value; if (!id || !confirm('Удалить шаблон?')) return; await api('/api/editor/templates/' + id, { method: 'DELETE' }); TEMPLATES = (await api('/api/editor/templates')).templates; renderPanel(); };
+  $('#exactToggle').onchange = () => { $('#exactToggle').checked ? scheduleExact() : hideExact(); };
+  $('#reset').onclick = async () => { if (!confirm('Сбросить всё оформление этого ролика?')) return; await api('/api/editor/' + itemId, { method: 'DELETE' }); dirty = false; location.reload(); };
+  bindTrim();
+}
+// a synthesized voice-over file for the current text/voice/speed (cached by the server)
+let voiceCache = { key: null, res: null };
+async function voiceFile() {
+  const v = S.voice, key = [v.text, v.voice, v.speed].join('|');
+  if (voiceCache.key === key) return voiceCache.res;
+  if (!v.text.trim()) throw new Error('впишите текст для озвучки');
+  const res = await api('/api/editor/tts', { method: 'POST', body: JSON.stringify({ text: v.text, voice: v.voice, speed: v.speed }) });
+  voiceCache = { key, res };
+  return res;
+}
+
+function drawSubStyles() {
+  $$('[data-substyle]').forEach(b => {
+    const cv = $('canvas', b), ctx = cv.getContext('2d'), k = cv.width / 400;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.save(); ctx.scale(k, k); ctx.translate(-340, -(S.subtitles.y) + 80);
+    drawSubtitle(ctx, { ...S.subtitles, ...SUB_STYLES[b.dataset.substyle], size: 64 }, [['Вот', 'это', 'да']], SUB_STYLES[b.dataset.substyle].karaoke ? 1 : -1);
+    ctx.restore();
+  });
+}
+
+const TEXT_NEW ={ text: '', x: 60, y: 200, w: 960, size: 72, color: '#ffffff', box: false, box_color: '#000000b0', font: 'heavy', align: 'center' };
+
+function applyTemplate(id) {
+  const t = TEMPLATES.find(x => x.id === id); if (!t) return;
+  const keep = { trim_start: S.time.trim_start, trim_end: S.time.trim_end }, oldTexts = S.texts;
+  const voiceText = S.voice.text;
+  S = clone(t.spec); Object.assign(S.time, keep); S.voice.text = voiceText;
+  // words already typed stay, the template only decides where and how they look
+  S.texts.forEach((x, i) => { if (!x.text && oldTexts[i] && oldTexts[i].text) x.text = oldTexts[i].text; });
+  if (!P.item.has_subtitles) S.subtitles.enabled = false;
+  P.template_id = id; sel = { kind: 'video' };
+  $$('[data-tpl]').forEach(b => b.classList.toggle('on', +b.dataset.tpl === id));
+  Promise.all([loadAsset(ASSETS.find(a => a.id === S.banner.asset)), loadAsset(ASSETS.find(a => a.id === S.background.asset))]).then(redraw);
+  changed();
+  toast('Шаблон «' + t.name + '» применён', 'ok');
+}
+
+// ================= trim bar (source seconds) =================
+function syncTrim() {
+  const tr = $('#trim'); if (!tr) return;
+  const d = P.item.duration, a = S.time.trim_start, b = S.time.trim_end || d, pct = v => (v / d * 100) + '%';
+  Object.assign($('#keep').style, { left: pct(a), width: `calc(${pct(b - a)})` });
+  $('#hdA').style.left = pct(a); $('#hdB').style.left = pct(b);
+  const st = sourceTime(S, d, at); $('#ph').style.left = pct(st == null ? a : st);
+  $('#trimA').textContent = 'с ' + fmt(a); $('#trimB').textContent = 'до ' + fmt(b); $('#trimLen').textContent = 'осталось ' + (b - a).toFixed(1) + ' с';
+}
+function bindTrim() {
+  const tr = $('#trim'), d = P.item.duration;
+  const drag = (el, apply) => el.onpointerdown = e => {
+    e.preventDefault(); el.setPointerCapture(e.pointerId);
+    const r = tr.getBoundingClientRect(), x0 = e.clientX, a0 = S.time.trim_start, b0 = S.time.trim_end || d;
+    el.onpointermove = m => { apply((m.clientX - r.left) / r.width * d, (m.clientX - x0) / r.width * d, a0, b0); syncControls(); redraw(); };
+    el.onpointerup = () => { el.onpointermove = null; changed(); };
+  };
+  drag($('#hdA'), v => { S.time.trim_start = Math.max(0, Math.min(v, (S.time.trim_end || d) - 0.5)); at = S.time.start_delay; seek(); });
+  drag($('#hdB'), v => { const e = Math.min(d, Math.max(v, S.time.trim_start + 0.5)); S.time.trim_end = e >= d - 0.05 ? null : e; at = Math.max(0, total() - 0.1); seek(); });
+  drag($('#keep'), (v, dv, a0, b0) => { const len = b0 - a0, a = Math.max(0, Math.min(d - len, a0 + dv)); S.time.trim_start = a; S.time.trim_end = a + len >= d - 0.05 ? null : a + len; seek(); });
+}
+
+// ================= stage: boxes, drag, resize, snapping =================
+function layerRects() {
+  const out = [];
+  const v = S.video; out.push({ kind: 'video', label: 'видео', x: v.x, y: v.y, w: v.w, h: v.h });
+  const a = ASSETS.find(x => x.id === S.banner.asset);
+  if (a && a.width) { const bw = even(CW * S.banner.scale); out.push({ kind: 'banner', label: 'баннер', x: S.banner.x, y: S.banner.y, w: bw, h: even(bw * a.height / a.width) }); }
+  S.texts.forEach((t, i) => out.push({ kind: 'text', i, label: 'текст ' + (i + 1), x: t.x, y: t.y, w: t.w, h: textHeight(t), empty: !t.text.trim() }));
+  if (S.subtitles.enabled && P.item.has_subtitles) {
+    const h = subsHeight(); out.push({ kind: 'subs', label: 'субтитры', x: 60, y: Math.max(0, Math.min(CH - h, S.subtitles.y - Math.floor(h / 2))), w: CW - 120, h });
+  }
+  return out;
+}
+// height of a two-line subtitle in the current style (app/editor/subs.py layout)
+function subsHeight() {
+  const sub = S.subtitles, size = Math.floor(sub.size), stroke = sub.stroke > 0 ? Math.floor(size * sub.stroke) : 0;
+  return Math.floor(size * 1.25) * 2 + Math.max(stroke * 2, Math.floor(size / 3)) * 2;
+}
+function textHeight(t) {
+  const ctx = comp.ctx; ctx.save(); ctx.font = fontCss(t.font, t.size);
+  const n = t.text.trim() ? wrapWords(ctx, t.text, t.w).length : 1; ctx.restore();
+  return Math.floor(t.size * 1.2) * n;
+}
+const isSel = r => r.kind === sel.kind && (r.kind !== 'text' || r.i === sel.i);
+
+function boxes() {
+  const ov = $('#ov'); if (!ov) return;
+  ov.innerHTML = '';
+  // the selected layer goes last so its handles are on top
+  const rects = layerRects().sort((a, b) => isSel(a) - isSel(b));
+  for (const r of rects) {
+    const el = document.createElement('div');
+    el.className = `box ${r.kind} ${isSel(r) ? 'sel' : ''} ${r.empty ? 'empty-text' : ''}`;
+    Object.assign(el.style, { left: r.x * D + 'px', top: r.y * D + 'px', width: r.w * D + 'px', height: r.h * D + 'px' });
+    const hs = r.kind === 'video' ? ['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'] : r.kind === 'text' ? ['nw', 'ne', 'sw', 'se', 'e', 'w'] : r.kind === 'subs' ? ['ne', 'se'] : ['nw', 'ne', 'sw', 'se'];
+    el.innerHTML = `<span class="tag">${r.label}</span>` + hs.map(h => `<span class="h ${h}" data-h="${h}"></span>`).join('');
+    el.onpointerdown = e => startDrag(e, r, el);
+    ov.append(el);
+  }
+}
+
+function startDrag(e, r, el) {
+  e.preventDefault(); e.stopPropagation();
+  if (!isSel(r)) { sel = r.kind === 'text' ? { kind: 'text', i: r.i } : { kind: r.kind }; boxes(); syncControls(); }
+  el = [...$$('#ov .box')].find(b => b.classList.contains('sel'));
+  el.setPointerCapture(e.pointerId);
+  const h = e.target.dataset.h || null, sx = e.clientX, sy = e.clientY, s0 = clone(S), r0 = { ...r };
+  hideExact();
+  el.onpointermove = m => {
+    const dx = (m.clientX - sx) / D, dy = (m.clientY - sy) / D;
+    if (!h) move(r0, dx, dy, m.altKey); else resize(r0, s0, h, dx, dy, m.shiftKey);
+    syncControls(); redraw();
+    const nr = layerRects().find(isSel); Object.assign(el.style, { left: nr.x * D + 'px', top: nr.y * D + 'px', width: nr.w * D + 'px', height: nr.h * D + 'px' });
+  };
+  el.onpointerup = () => { el.onpointermove = null; $('#gv').style.display = $('#gh').style.display = 'none'; if (JSON.stringify(s0) !== JSON.stringify(S)) changed(); };
+}
+
+function setPos(r, x, y) {
+  if (r.kind === 'subs') S.subtitles.y = Math.round(Math.max(100, Math.min(CH - 100, y + r.h / 2)));
+  else if (r.kind === 'video') Object.assign(S.video, { x: Math.round(x), y: Math.round(y) });
+  else if (r.kind === 'banner') Object.assign(S.banner, { x: Math.round(x), y: Math.round(y) });
+  else Object.assign(S.texts[r.i], { x: Math.round(x), y: Math.round(y) });
+}
+function move(r0, dx, dy, free) {
+  let x = r0.x + (r0.kind === 'subs' ? 0 : dx), y = r0.y + dy;
+  const snap = 14 / D * 0.5;  // a few screen pixels
+  let gv = false, gh = false;
+  if (!free) {
+    if (Math.abs(x + r0.w / 2 - CW / 2) < snap) { x = CW / 2 - r0.w / 2; gv = true; }
+    if (Math.abs(y + r0.h / 2 - CH / 2) < snap) { y = CH / 2 - r0.h / 2; gh = true; }
+    if (Math.abs(x) < snap) x = 0; if (Math.abs(y) < snap) y = 0;
+    if (Math.abs(x + r0.w - CW) < snap) x = CW - r0.w; if (Math.abs(y + r0.h - CH) < snap) y = CH - r0.h;
+  }
+  $('#gv').style.display = gv ? 'block' : 'none'; $('#gh').style.display = gh ? 'block' : 'none';
+  setPos(r0, x, y);
+}
+function resize(r0, s0, h, dx, dy, free) {
+  // corners keep proportions (Shift: free), edges change one side; the opposite side stays put
+  const left = h.includes('w'), top = h.includes('n'), corner = h.length === 2;
+  let w = r0.w + (h.includes('e') ? dx : left ? -dx : 0), hh = r0.h + (h.includes('s') ? dy : top ? -dy : 0);
+  if (corner && !free) {
+    const k = Math.max(w / r0.w, hh / r0.h); w = r0.w * k; hh = r0.h * k;
+  }
+  w = Math.max(40, w); hh = Math.max(40, hh);
+  const x = left ? r0.x + r0.w - w : r0.x, y = top ? r0.y + r0.h - hh : r0.y;
+  if (r0.kind === 'subs') { S.subtitles.size = Math.max(32, Math.min(140, Math.round(s0.subtitles.size * hh / r0.h))); return; }
+  if (r0.kind === 'video') Object.assign(S.video, { x: Math.round(x), y: Math.round(y), w: even(w), h: even(hh) });
+  else if (r0.kind === 'banner') { S.banner.scale = Math.max(0.05, Math.round(w / CW * 1000) / 1000); S.banner.x = Math.round(left ? r0.x + r0.w - even(CW * S.banner.scale) : r0.x); S.banner.y = Math.round(top ? r0.y + r0.h - even(even(CW * S.banner.scale) * r0.h / r0.w) : r0.y); }
+  else {
+    const t = S.texts[r0.i], t0 = s0.texts[r0.i];
+    if (corner) { const k = w / r0.w; t.size = Math.max(24, Math.min(200, Math.round(t0.size * k))); t.w = Math.round(t0.w * k); }
+    else t.w = Math.max(100, Math.round(w));
+    t.x = Math.round(left ? r0.x + r0.w - t.w : r0.x);
+    if (top) t.y = Math.round(r0.y + r0.h - textHeight(t));
+  }
+}
+
+function placePreset(pos) {
+  const r = layerRects().find(isSel) || layerRects()[0];
+  const TOP = 220, BOTTOM = 340;  // keep clear of Instagram's own buttons and caption
+  if (r.kind === 'subs') { S.subtitles.y = { center: CH / 2, top: TOP + 200, bottom: 1300, full: 1300 }[pos]; return changed(); }
+  if (pos === 'full') {
+    if (r.kind === 'video') Object.assign(S.video, { x: 0, y: 0, w: CW, h: CH, fit: 'cover' });
+    else if (r.kind === 'banner') Object.assign(S.banner, { x: 0, y: 0, scale: 1 });
+    else Object.assign(S.texts[r.i], { x: 60, w: CW - 120 });
+    return changed();
+  }
+  const x = r.kind === 'text' ? 60 : (CW - r.w) / 2;
+  if (r.kind === 'text') S.texts[r.i].w = CW - 120;
+  const y = pos === 'center' ? (CH - r.h) / 2 : pos === 'top' ? TOP : CH - BOTTOM - r.h;
+  setPos(r, x, y);
+  changed();
+}
+
+// ================= live preview =================
+function loadAsset(a) {
+  if (!a || media.assets[a.id] || a.kind === 'audio') return Promise.resolve();
+  return new Promise(res => {
+    if (a.kind === 'image') { const im = new Image(); im.onload = im.onerror = res; im.src = a.file; media.assets[a.id] = { el: im, kind: 'image', width: a.width, height: a.height }; }
+    else { const v = document.createElement('video'); v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto'; v.src = a.file;
+      v.onloadeddata = v.onerror = res; media.assets[a.id] = { el: v, kind: 'video', width: a.width, height: a.height }; }
+  });
+}
+
+let drawQueued = false;
+function redraw() { if (drawQueued) return; drawQueued = true; requestAnimationFrame(() => { drawQueued = false; comp.draw(S, at); }); }
+
+// seek every video to the current result time, then draw (scrubbing and edits while paused)
+let seeking = false, seekAgain = false, firstSeek = false;
+function seek() {
+  if (playing) return;
+  if (seeking) { seekAgain = true; return; }
+  seeking = true;
+  const st = sourceTime(S, P.item.duration, at), src = media.src;
+  const target = st == null ? S.time.trim_start : st;
+  const jobs = [];
+  if (Math.abs(src.currentTime - target) > 0.01) jobs.push(new Promise(r => { src.addEventListener('seeked', r, { once: true }); src.currentTime = target; setTimeout(r, 1500); }));
+  for (const a of Object.values(media.assets)) if (a.kind === 'video' && a.el.duration) {
+    const t = at % a.el.duration; if (Math.abs(a.el.currentTime - t) > 0.04) jobs.push(new Promise(r => { a.el.addEventListener('seeked', r, { once: true }); a.el.currentTime = t; setTimeout(r, 1500); }));
+  }
+  Promise.all(jobs).then(() => { seeking = false; redraw(); if (firstSeek) { firstSeek = false; drawTemplateThumbs(); } if (seekAgain) { seekAgain = false; seek(); } else scheduleExact(); });
+}
+
+function play() {
+  if (playing) return stop();
+  if (at >= total() - 0.05) at = 0;
+  playing = true; hideExact(); $('#stage').classList.add('playing'); $('#play').textContent = '❚❚';
+  const src = media.src, d = S.time.start_delay, wall0 = performance.now(), t0 = at;
+  src.muted = false; src.volume = Math.min(1, S.audio.volume); src.playbackRate = S.time.speed;
+  const music = S.audio.music && ASSETS.find(a => a.id === S.audio.music);
+  if (music) { media.music = media.music || new Audio(); if (!media.music.src.endsWith(music.file)) media.music.src = music.file;
+    media.music.loop = true; media.music.volume = Math.min(1, S.audio.music_volume); media.music.currentTime = t0; media.music.play().catch(() => {}); }
+  for (const a of Object.values(media.assets)) if (a.kind === 'video') a.el.play().catch(() => {});
+  let voiceEnd = -1;
+  if (S.voice.enabled && S.voice.text.trim()) voiceFile().then(r => {
+    if (!playing) return;
+    voiceAudio && voiceAudio.pause(); voiceAudio = new Audio(r.url); voiceAudio.volume = Math.min(1, S.voice.volume);
+    voiceEnd = d + (r.duration || 0);
+    const off = at - d;
+    if (off < (r.duration || 0)) { const go = () => { voiceAudio.currentTime = Math.max(0, at - d); voiceAudio.play().catch(() => {}); };
+      off >= 0 ? go() : setTimeout(() => playing && go(), -off * 1000); }
+  }).catch(e => toast('Озвучка: ' + e.message, 'err'));
+  const started = () => { const st = sourceTime(S, P.item.duration, Math.max(at, d)); src.currentTime = st; src.play().catch(() => {}); };
+  if (t0 >= d) started();
+  const tick = () => {
+    if (!playing) return;
+    // the clip's own clock keeps sound and picture together; before it starts, the wall clock runs
+    at = !src.paused && at >= d ? d + (src.currentTime - S.time.trim_start) / S.time.speed : t0 + (performance.now() - wall0) / 1000;
+    if (at >= d && src.paused && !src.ended) started();
+    src.volume = Math.min(1, S.audio.volume * (at >= d && at < voiceEnd ? S.voice.duck : 1));
+    if (at >= total() - 0.02 || src.ended) { at = total(); stop(); return; }
+    comp.draw(S, at); $('#t').value = at; $('#tl').textContent = `${fmt(at)} / ${fmt(total())}`; syncTrim();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+function stop() {
+  playing = false; media.src.pause(); media.src.muted = true; media.music && media.music.pause(); voiceAudio && voiceAudio.pause();
+  for (const a of Object.values(media.assets)) if (a.kind === 'video') a.el.pause();
+  $('#stage').classList.remove('playing'); $('#play').textContent = '▶';
+  syncControls(); seek();
+}
+
+// the exact FFmpeg frame for the current spec, shown on pause (same pixels as the export)
+function hideExact() { exactSeq++; clearTimeout(exactTimer); const im = $('#exact'); if (im) im.hidden = true; }
+function scheduleExact() {
+  clearTimeout(exactTimer);
+  if (playing || !$('#exactToggle')?.checked && $('#exactToggle')) return;
+  const seq = ++exactSeq, spec = JSON.stringify({ spec: S, at });
+  exactTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`/api/editor/${itemId}/frame`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: spec });
+      if (!r.ok || seq !== exactSeq) return;
+      const url = URL.createObjectURL(await r.blob()), im = $('#exact');
+      im.onload = () => { if (seq === exactSeq) im.hidden = false; };
+      if (im.src.startsWith('blob:')) URL.revokeObjectURL(im.src);
+      im.src = url;
+    } catch { /* the live preview stays */ }
+  }, 900);
+}
+
+// template cards: each one is drawn live with the current frame of this video
+function drawTemplateThumbs() {
+  if (!comp || !media.src.readyState) return;
+  $$('[data-tpl]').forEach(b => {
+    const t = TEMPLATES.find(x => x.id === +b.dataset.tpl); if (!t) return;
+    const spec = clone(t.spec); Object.assign(spec.time, { trim_start: S.time.trim_start, trim_end: S.time.trim_end, start_delay: 0, appear: 'none' });
+    spec.texts = spec.texts.map((x, i) => ({ ...x, text: x.text || (S.texts[i] && S.texts[i].text) || '' }));
+    spec.subtitles.enabled = false;
+    new Composer($('canvas', b), media).draw(spec, 0.5);
+  });
+}
+
+// ================= saving and export =================
+function showState(extra) {
+  const st = $('#state'); if (!st) return;
+  const map = { queued: 'монтаж в очереди…', rendering: 'идёт монтаж…', done: P.up_to_date && !dirty ? 'в «Готовых» ✓' : '', error: 'ошибка монтажа: ' + (P.render_error || '') };
+  st.textContent = extra || [dirty ? 'сохраняю…' : 'сохранено', map[P.render_state]].filter(Boolean).join(' · ');
+  st.style.color = P.render_state === 'error' ? 'var(--err)' : '';
+}
+async function autosave() {
+  try { await api('/api/editor/' + itemId, { method: 'PUT', body: JSON.stringify({ spec: S }) }); dirty = false; P.up_to_date = false; showState(); }
+  catch (e) { showState('не сохранилось: ' + e.message); }
+}
+
+async function openEditor() {
+  [P, { assets: ASSETS }, { templates: TEMPLATES }, { voices: VOICES }] = await Promise.all([api('/api/editor/' + itemId), api('/api/editor/assets'), api('/api/editor/templates'), api('/api/editor/voices')]);
+  S = P.spec;
+  at = Math.min(S.time.start_delay + 1, total());
+  const src = document.createElement('video');
+  src.muted = true; src.playsInline = true; src.preload = 'auto'; src.src = P.source_url;
+  media = { src, srcW: P.item.width, srcH: P.item.height, duration: P.item.duration, assets: {}, cues: P.cues || [] };
+  editorLayout();
+  comp = new Composer($('#cv'), media);
+  const onReady = () => { media.srcW = src.videoWidth || media.srcW; media.srcH = src.videoHeight || media.srcH; firstSeek = true; seek(); };
+  if (src.readyState >= 2) onReady(); else src.addEventListener('loadeddata', onReady, { once: true });
+  await Promise.all([S.banner.asset, S.background.asset].map(id => loadAsset(ASSETS.find(a => a.id === id))));
+  src.addEventListener('error', () => {
+    // the browser cannot decode this file: show the FFmpeg frame instead of the live picture
+    $('#stage').insertAdjacentHTML('beforeend', '<div class="fallback">Браузер не умеет показывать этот формат вживую — показываю кадры из FFmpeg.</div>');
+    scheduleExact();
+  });
+  boxes(); showState();
+  $('#t').oninput = () => { if (playing) stop(); at = +$('#t').value; syncControls(); hideExact(); seek(); };
+  $('#play').onclick = play;
+  $$('#pos [data-pos]').forEach(b => b.onclick = () => placePreset(b.dataset.pos));
+  $('#stage').onpointerdown = e => { if (e.target.closest('.box')) return; sel = { kind: 'video' }; boxes(); syncControls(); };
+  const it = P.item;
+  $('#prev').onclick = () => go(-1); $('#next').onclick = () => go(1); $('#trash').onclick = trashAndNext;
+  document.addEventListener('keydown', e => {
+    if (e.target.matches('input, textarea, select')) return;
+    if (e.code === 'Space') { e.preventDefault(); play(); }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && sel.kind === 'text') { S.texts.splice(sel.i, 1); sel = { kind: 'video' }; changed(); }
+    const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (arrows && e.altKey) { e.preventDefault(); const r = layerRects().find(isSel), step = e.shiftKey ? 20 : 2; setPos(r, r.x + arrows[0] * step, r.y + arrows[1] * step); changed(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); go(e.key === 'ArrowRight' ? 1 : -1); }
+    else if (e.key === 'Enter' && it.can_export) { e.preventDefault(); exportAndNext(); }
+    else if (e.key === 'Delete' && sel.kind !== 'text') { e.preventDefault(); trashAndNext(); }
+  });
+  $('#export').onclick = async () => {
+    clearTimeout(saveTimer);
+    try { await api(`/api/editor/${itemId}/export`, { method: 'POST', body: JSON.stringify({ spec: S, to_ready: true }) }); dirty = false; P.render_state = 'queued'; showState(); toast('Монтирую в полном качестве — ролик сам появится в «Готовых»', 'ok'); poll(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
+  window.addEventListener('beforeunload', e => { if (dirty) { autosave(); e.preventDefault(); e.returnValue = ''; } });
+  if (['queued', 'rendering'].includes(P.render_state)) poll();
+}
+
+// neighbours in the editor list («new» videos first: the ones not in «Готовые» yet)
+let NAV = null;
+async function neighbour(dir) {
+  NAV = NAV || (await api('/api/editor/items?only_new=true')).items.map(i => i.id);
+  let ids = NAV, i = ids.indexOf(itemId);
+  if (i < 0) { ids = [...ids, itemId].sort((a, b) => b - a); i = ids.indexOf(itemId); }
+  return ids[i + dir] || null;
+}
+async function go(dir, after = '') {
+  if (dirty) { clearTimeout(saveTimer); await autosave(); }
+  const id = await neighbour(dir);
+  if (!id) { toast(dir > 0 ? 'Это последний новый ролик' : 'Это первый ролик'); return; }
+  location.href = '/editor?item=' + id + after;
+}
+async function exportAndNext() {
+  clearTimeout(saveTimer);
+  try { await api(`/api/editor/${itemId}/export`, { method: 'POST', body: JSON.stringify({ spec: S, to_ready: true }) }); dirty = false;
+    sessionStorage.setItem('edToast', 'Ролик #' + itemId + ' монтируется и сам попадёт в «Готовые»'); go(1); }
+  catch (e) { toast(e.message, 'err'); }
+}
+async function trashAndNext() {
+  try { await api(`/api/items/${itemId}/trash`, { method: 'POST' }); dirty = false; clearTimeout(saveTimer);
+    sessionStorage.setItem('edUndo', String(itemId)); const id = await neighbour(1) || await neighbour(-1);
+    location.href = id ? '/editor?item=' + id : '/editor'; }
+  catch (e) { toast(e.message, 'err'); }
+}
+function showCarryOver() {
+  try {
+    const t = sessionStorage.getItem('edToast'); if (t) { sessionStorage.removeItem('edToast'); toast(t, 'ok'); }
+    const u = sessionStorage.getItem('edUndo'); if (!u) return;
+    sessionStorage.removeItem('edUndo');
+    const bar = document.createElement('div'); bar.className = 'toast'; bar.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:50;display:flex;gap:12px;align-items:center';
+    bar.innerHTML = `Ролик #${u} в корзине <button class="btn sm">Вернуть</button>`;
+    $('button', bar).onclick = async () => { await api(`/api/items/${u}/restore`, { method: 'POST' }); bar.remove(); toast('Ролик возвращён', 'ok'); };
+    document.body.append(bar); setTimeout(() => bar.remove(), 10000);
+  } catch { }
+}
+
+async function poll() {
+  const p = await api('/api/editor/' + itemId);
+  Object.assign(P, { render_state: p.render_state, render_error: p.render_error, up_to_date: p.up_to_date });
+  showState();
+  if (['queued', 'rendering'].includes(p.render_state)) setTimeout(poll, 2000);
+  else if (p.render_state === 'done') toast('Готово: ролик в «Готовых»', 'ok');
+  else if (p.render_state === 'error') toast('Монтаж не получился: ' + p.render_error, 'err');
+}
+
+(async () => { await loadCategories(); showCarryOver(); itemId ? openEditor().catch(e => { $('#main').innerHTML = `<div class="card empty"><b>Не открылось</b>${esc(e.message)}</div>`; renderSidebar('editor'); }) : picker(); })();
+</script>
+</body>
+</html>

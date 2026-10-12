@@ -1,0 +1,26 @@
+# Ничего личного и тяжёлого в образ не попадает
+.git
+.venv
+.env
+.env.*
+!.env.example
+credentials/
+tokens/
+data/
+database/
+logs/
+models/
+Reels/
+Готовые/
+*.db
+*.session
+*.patch
+*.tgz
+*.zip
+__pycache__/
+*.pyc
+.pytest_cache/
+.factory.lock
+.DS_Store
+claude_desktop.docx
+browser_profiles/

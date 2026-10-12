@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Сводка — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+<style>
+  .tiles a.tile { color: inherit; text-decoration: none; transition: transform .15s; }
+  .tiles a.tile:hover { transform: translateY(-2px); }
+  .tile small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  .flow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
+  .flow b { color: var(--text); }
+  .strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+  .strip a { display: block; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
+  .strip img { width: 100%; aspect-ratio: 9/16; object-fit: cover; display: block; background: var(--surface-2); }
+  .strip div { font-size: 11px; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+  .kvs { display: grid; gap: 8px; font-size: 13px; }
+  .kvs div { display: flex; justify-content: space-between; gap: 10px; }
+  .kvs span { color: var(--muted); }
+  .err-row { font-size: 12px; padding: 8px 10px; border-radius: 8px; background: var(--err-bg); color: #8f1d1d; }
+  @media (max-width: 1000px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head"><div><h1>Сводка</h1><p class="sub" id="sub">Как работает завод сейчас.</p></div>
+      <div class="row"><a class="btn" href="/calendar">🗓 Календарь</a><button class="btn primary" id="now">Парсить сейчас</button></div></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="two">
+      <div class="stack">
+        <section class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2>Последние в «Готовых»</h2><a href="/ready">все →</a></div>
+          <div class="strip" id="recent"></div></section>
+        <section class="card" id="errBox" hidden><h2 style="margin-bottom:10px">Ошибки</h2><div class="stack" id="errs" style="gap:8px"></div></section>
+      </div>
+      <div class="stack">
+        <section class="card"><h2 style="margin-bottom:12px">Состояние</h2><div class="kvs" id="state"></div></section>
+        <section class="card"><div class="row" style="justify-content:space-between;margin-bottom:10px"><h2>Место на диске</h2><span class="small muted" id="free"></span></div>
+          <div class="kvs" id="sizes"></div>
+          <div class="stack" id="clean" style="gap:8px;margin-top:14px"></div>
+          <p class="note" style="font-size:11px;color:var(--muted);margin:10px 0 0">Удаляются только файлы завода (папка data) и опубликованные ролики из «Готовых». Неопубликованные готовые ролики не трогаются. Временные файлы старше нескольких дней удаляются сами каждый час.</p></section>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js?v=20"></script>
+<script>
+const tile = (href, v, l, kind = '', small = '') => `<a class="tile ${kind}" href="${href}"><div class="v">${v}</div><div class="l">${l}</div>${small ? `<small>${small}</small>` : ''}</a>`;
+async function load() {
+  const d = await api('/api/dashboard'), t = d.tiles, w = d.worker;
+  $('#tiles').innerHTML =
+    tile('/sources', t.downloaded, 'скачано', '', `за сутки: ${t.downloaded_24h}`) +
+    tile('/videos?status=APPROVED', t.in_work, 'в обработке', 'accent') +
+    tile('/editor', t.to_edit, 'ждут монтажа', 'accent', '') +
+    tile('/ready', t.in_ready, 'в «Готовых»', 'ok', `за сутки: ${t.ready_24h}`) +
+    tile('/ready', t.published, 'опубликовано', 'ok', t.errors ? `ошибок: ${t.errors}` : '');
+  const next = w.next_scan ? new Date(w.next_scan).toLocaleString('ru', { weekday: 'long', hour: '2-digit', minute: '2-digit' }) : 'выключен';
+  $('#sub').textContent = `Каналов: ${t.channels}. Следующий парсинг: ${next}.`;
+  $('#recent').innerHTML = d.recent_ready.map(r => `<a href="/ready?item=${r.id}"><img loading="lazy" src="${r.thumbnail}" alt=""><div>${esc(r.title || '#' + r.id)}</div></a>`).join('') || '<p class="muted small">Пока пусто: откройте «Редактор» и отправьте первый ролик.</p>';
+  const busy = w.scanning_channels || w.queued_channels || w.downloads_in_progress || w.processing;
+  $('#state').innerHTML = [
+    ['Завод', busy ? '<b style="color:var(--warn)">работает</b>' : '<b style="color:var(--ok)">ждёт</b>'],
+    ['Парсинг', w.scanning_channels || w.queued_channels ? `${w.scanning_channels} сканируется, ${w.queued_channels} в очереди` : `следующий: ${next}`],
+    ['Скачивается', w.downloads_in_progress || 'нет'],
+    ['Анализ и монтаж', w.processing ? 'идёт' : 'нет'],
+    ['Монтаж в редакторе', d.editor_queue && d.editor_queue.queued ? `в очереди ${d.editor_queue.queued}` : 'очередь пуста'],
+    ['Telegram', w.blocked_until ? `<span style="color:var(--err)">пауза до ${new Date(w.blocked_until).toLocaleTimeString('ru')}</span>` : 'в порядке'],
+    ['Диск занят', `<span style="color:${d.disk_percent > 85 ? 'var(--err)' : 'inherit'}">${d.disk_percent}%</span>`],
+    ['Копия базы', d.last_backup ? new Date(d.last_backup).toLocaleString('ru') : 'ещё не делалась'],
+  ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+  const errs = [...d.bad_channels.map(c => `<div class="err-row"><b>@${esc(c.username)}</b>: ${esc(c.error)}</div>`),
+                ...d.errors.map(e => `<div class="err-row row" style="justify-content:space-between;align-items:flex-start"><span><a href="/videos?item=${e.id}">#${e.id}</a> ${esc(e.title || '')}: ${esc(e.error)}</span><button class="btn ghost sm" data-hide="${e.id}" title="Убрать ролик в корзину">Скрыть</button></div>`)];
+  $('#errBox').hidden = !errs.length; $('#errs').innerHTML = errs.join('');
+  $$('[data-hide]').forEach(b => b.onclick = async () => { await api(`/api/items/${b.dataset.hide}/trash`, { method: 'POST' }); load(); });
+}
+const gb = b => b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' ГБ' : (b / 2 ** 20).toFixed(0) + ' МБ';
+let DAYS = 30;
+async function loadDisk() {
+  const r = await api('/api/storage?days=' + DAYS);
+  $('#free').textContent = `занято ${r.disk_percent}%, свободно ${gb(r.disk_free)}`;
+  $('#sizes').innerHTML = Object.entries(r.sections).map(([k, v]) => `<div><span>${k}</span><b>${gb(v)}</b></div>`).join('');
+  $('#clean').innerHTML = r.actions.map(a => `<div class="row" style="justify-content:space-between;gap:8px">
+      <span class="small">${a.label}${a.action === 'published' ? ` старше <input type="number" id="days" value="${DAYS}" min="0" style="width:56px;font:inherit;padding:2px 4px"> дн.` : ''}<br><span class="muted">${a.files ? `${a.files} файлов, ${gb(a.bytes)}` : 'пусто'}</span></span>
+      <button class="btn sm danger" data-clean="${a.action}" ${a.files || (a.action === 'trash' && a.items) ? '' : 'disabled'}>Удалить</button></div>`).join('');
+  $('#days') && ($('#days').onchange = () => { DAYS = +$('#days').value || 0; loadDisk(); });
+  $$('[data-clean]').forEach(b => b.onclick = async () => {
+    const a = r.actions.find(x => x.action === b.dataset.clean);
+    const warn = a.action === 'ready_sources' ? '\nРолики в «Готовых» останутся, но открыть их в редакторе заново будет нельзя.' : a.action === 'trash' ? '\nВернуть эти ролики из корзины будет нельзя.' : '';
+    if (!confirm(`${a.label}: удалить ${a.files} файлов (${gb(a.bytes)})?${warn}`)) return;
+    try { const res = await api('/api/storage/clean', { method: 'POST', body: JSON.stringify({ action: a.action, days: DAYS, confirm: true }) }); toast(`Освобождено ${gb(res.freed)}`, 'ok'); loadDisk(); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+}
+loadDisk();
+$('#now').onclick = async () => { try { const r = await api('/api/channels/check-all', { method: 'POST' }); toast(r.queued ? `Парсинг запущен: ${r.queued}` : 'Все каналы уже в работе', 'ok'); load(); } catch (e) { toast(e.message, 'err'); } };
+renderSidebar('dashboard');
+load(); setInterval(load, 5000);
+</script>
+</body>
+</html>

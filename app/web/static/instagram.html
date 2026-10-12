@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Instagram — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+<style>
+  .qrow .st-b { white-space: nowrap; }
+  .qrow .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .st { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .st .big { font-size: 18px; font-weight: 700; }
+  .lamp { font-size: 20px; }
+  .steps-ig { margin: 10px 0 0; padding-left: 20px; color: var(--text-2); font-size: 13px; line-height: 1.7; }
+  .pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin-top: 12px; max-height: 460px; overflow-y: auto; }
+  .pk { position: relative; border-radius: 10px; overflow: hidden; border: 2px solid var(--line); cursor: pointer; background: var(--surface); }
+  .pk img { width: 100%; aspect-ratio: 9/16; object-fit: cover; display: block; background: var(--surface-2); }
+  .pk.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+  .pk .ck { position: absolute; top: 6px; left: 6px; width: 18px; height: 18px; pointer-events: none; }
+  .pk .no { position: absolute; top: 5px; right: 5px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 99px; min-width: 20px; text-align: center; padding: 1px 5px; }
+  .pk .t { font-size: 10px; padding: 3px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+  .attn { background: var(--warn-bg); color: #7a4a06; border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head"><div><h1>Instagram</h1>
+      <p class="sub">Публикация готовых Reels в ваш Instagram через отдельное окно Chrome. Пароль завод не вводит и не хранит.</p></div></div>
+    <div id="off" class="card empty" hidden><b>Модуль выключен</b>Включите <code>instagram_web.enabled: true</code> в <code>config/config.yaml</code> и перезапустите завод.</div>
+    <div class="stack" id="on" hidden>
+      <section class="card">
+        <div class="st"><span class="lamp" id="lamp">⚪</span><div><div class="big" id="title">…</div><div class="small muted" id="sub"></div></div>
+          <span class="spacer"></span><div class="row" id="acts"></div></div>
+        <div id="extra"></div>
+      </section>
+      <section class="card">
+        <div class="row"><h2>Аккаунты</h2><span class="small muted">связанные аккаунты Instagram этого входа</span><span class="spacer"></span>
+          <button class="btn sm" id="accRefresh">↻ Обновить список</button></div>
+        <div class="stack" id="accs" style="gap:6px;margin-top:10px"></div>
+      </section>
+      <section class="card" id="afBox" hidden><div class="row"><h2>🔵 Автозалив в кружке</h2><span class="spacer"></span><button class="btn sm danger" id="afStop">⏹ Остановить автозалив</button></div>
+        <div class="stack" id="afRows" style="gap:6px;margin-top:10px"></div></section>
+      <section class="card">
+        <div class="row"><h2>Выбрать ролики для публикации</h2><span class="small muted">из «Готовых», ещё не в очереди и не опубликованные · порядок — как отмечали</span><span class="spacer"></span>
+          <button class="btn ghost sm" id="pkAll">Выбрать все</button><button class="btn ghost sm" id="pkNone">Снять все</button><b class="small" id="pkN"></b></div>
+        <div class="pick" id="pick"></div>
+        <div class="row" style="margin-top:12px;align-items:flex-end;gap:12px">
+          <label class="field" style="min-width:200px">Аккаунт<select id="pkAcc"></select></label>
+          <label class="field" style="flex:1;min-width:240px">Описание для всех выбранных (необязательно)<input type="text" id="pkCap" list="pkCaps" placeholder="пусто — без описания"><datalist id="pkCaps"></datalist></label>
+          <button class="btn primary" id="pkGo" disabled>📸 Опубликовать выбранные</button></div>
+      </section>
+      <div class="tiles" id="tiles"></div>
+      <section class="card">
+        <div class="row"><h2>Очередь</h2><span class="small muted" id="qinfo"></span><span class="spacer"></span>
+          <button class="btn sm" id="qpause"></button><a class="btn sm" href="/ready">＋ Добавить из «Готовых»</a>
+          <button class="btn primary" id="pubAll">🚀 Опубликовать все из Готовых</button></div>
+        <div class="row small" style="margin-top:10px"><label class="row" style="gap:6px"><input type="checkbox" id="autoOn"> <b>Автопостинг</b>: публиковать очередь по одному сам (интервал, окно часов и лимит ниже)</label></div>
+        <div class="row small" style="margin-top:12px;gap:14px">
+          <label class="row" style="gap:6px">Публикаций в день <input type="number" id="setLimit" min="0" max="1000" title="0 — без ограничения" style="width:64px;font:inherit;padding:4px 6px"></label>
+          <label class="row" style="gap:6px">Интервал, мин <input type="number" id="setInt" min="0" max="1440" title="0 — сразу один за другим" style="width:64px;font:inherit;padding:4px 6px"></label>
+          <label class="row" style="gap:6px">с <input type="time" id="setFrom" style="font:inherit;padding:3px 6px"></label>
+          <label class="row" style="gap:6px">до <input type="time" id="setTo" style="font:inherit;padding:3px 6px"></label>
+          <button class="btn sm" id="setSave">Сохранить</button></div>
+        <div class="drybox" style="margin-top:10px" id="autoNote"></div>
+        <div class="chips" id="qtabs" style="margin:12px 0"></div>
+        <div class="queue" id="q"></div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js?v=20"></script>
+<script>
+const LAMP = { DISCONNECTED: '⚪', CONNECTING: '🟡', READY: '🟢', PUBLISHING: '🟢', PAUSED: '🟡', WAITING_USER: '⚠️', ERROR: '🔴', STOPPING: '🟡' };
+let busy = false;
+async function act(path, label) {
+  if (busy) return; busy = true;
+  const btns = $$('#acts .btn'); btns.forEach(b => b.disabled = true);
+  if (label) toast(label);
+  try { render(await api('/api/instagram-web/' + path, { method: 'POST' })); }
+  catch (e) { toast(e.message, 'err'); }
+  finally { busy = false; }
+}
+let IG_STATUS = null, SETTINGS_SHOWN = false;
+function renderAccounts(s) {
+  const cur = s.account && s.account.username;
+  $('#accs').innerHTML = (s.accounts || []).map(a => a.excluded ? `<div class="row" style="justify-content:space-between;padding:6px 10px;border:1px dashed var(--line-2);border-radius:10px;opacity:.6">
+      <span>@${esc(a.username)} <span class="badge">личный, исключён</span></span><button class="btn ghost sm" data-unex="${esc(a.username)}">вернуть</button></div>` : `<div class="row" style="justify-content:space-between;padding:6px 10px;border:1px solid var(--line);border-radius:10px">
+      <span><b>@${esc(a.username)}</b> ${a.username === cur ? '<span class="badge ok">активен</span>' : ''}${a.need_login ? ' <span class="badge warn">нужен вход вручную</span>' : ''}</span>
+      <span class="row" style="gap:6px"><button class="btn ghost sm" data-ex="${esc(a.username)}" title="Личный аккаунт: завод не будет на него переключаться и публиковать">исключить</button>${a.username === cur ? '' : (a.need_login ? `<button class="btn sm primary" data-login="${esc(a.username)}">Войти вручную</button>` : '') + `<button class="btn sm" data-sw="${esc(a.username)}">Переключиться</button>`}</span></div>`).join('')
+    || '<p class="small muted">Нажмите «↻ Обновить список», чтобы загрузить связанные аккаунты.</p>';
+  $$('[data-ex], [data-unex]').forEach(b => b.onclick = async () => {
+    const ex = !!b.dataset.ex, name = b.dataset.ex || b.dataset.unex;
+    if (ex && !confirm(`Исключить @${name}? Завод не будет на него переключаться и публиковать.`)) return;
+    try { render(await api('/api/instagram-web/accounts/exclude', { method: 'POST', body: JSON.stringify({ username: name, excluded: ex }) })); } catch (e) { toast(e.message, 'err'); }
+  });
+  $$('[data-login]').forEach(b => b.onclick = async () => {
+    try { render(await api('/api/instagram-web/accounts/login', { method: 'POST', body: JSON.stringify({ username: b.dataset.login }) })); toast('Введите пароль в окне Chrome, затем «Я вошёл»'); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+  $$('[data-sw]').forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Переключаю…';
+    try { const r = await api('/api/instagram-web/accounts/switch', { method: 'POST', body: JSON.stringify({ username: b.dataset.sw }) }); render(r);
+      toast(r.account && r.account.username === b.dataset.sw ? 'Активен @' + b.dataset.sw : (r.message || 'Не получилось'), r.account && r.account.username === b.dataset.sw ? 'ok' : 'err'); }
+    catch (e) { toast(e.message, 'err'); b.disabled = false; }
+  });
+}
+function render(s) {
+  IG_STATUS = s;
+  $('#autoOn').checked = !!s.autopost;
+  $('#autoNote').textContent = s.autopost ? (s.paused ? 'Автопостинг включён, но очередь на паузе.' : 'Автопостинг включён: ролики из очереди уходят по одному с интервалом, только в окне часов и в пределах дневного лимита.')
+    : 'Автопостинг выключен: ролики публикуются только по кнопке «Опубликовать сейчас».';
+  renderAccounts(s); fillPickAccounts(s);
+  if (!SETTINGS_SHOWN && s.settings) { SETTINGS_SHOWN = true; $('#setLimit').value = s.settings.max_posts_per_day; $('#setInt').value = s.settings.interval_minutes; $('#setFrom').value = s.settings.window_start; $('#setTo').value = s.settings.window_end; }
+  const acc = s.account && s.account.username ? '@' + s.account.username : null;
+  $('#lamp').textContent = LAMP[s.state] || '⚪';
+  const titles = { PUBLISHING: 'Публикую…', STOPPING: 'Останавливаю после текущего шага', PAUSED: (acc ? acc + ' · ' : '') + 'очередь на паузе', DISCONNECTED: 'Не подключен', CONNECTING: 'Ждём вход в Instagram', READY: acc ? 'Подключен: ' + acc : 'Подключен', WAITING_USER: 'Требуется ваше действие', ERROR: 'Ошибка' };
+  $('#title').textContent = titles[s.state] || s.state;
+  $('#sub').textContent = (s.chrome_open ? 'Chrome открыт' : 'Chrome закрыт') + ' · профиль ' + s.profile;
+  const B = (id, text, cls = '') => `<button class="btn ${cls}" data-a="${id}">${text}</button>`;
+  let acts = '', extra = '';
+  if (s.state === 'DISCONNECTED' || s.state === 'ERROR') {
+    acts = B('connect', 'Подключить Instagram', 'primary');
+    extra = `<ol class="steps-ig"><li>Нажмите «Подключить Instagram» — откроется отдельное окно Chrome (ваш обычный Chrome не трогается).</li>
+      <li>Войдите в нём в свой Instagram, как обычно. Пароль вводите сами, завод его не видит и не сохраняет.</li><li>Вернитесь сюда и нажмите «Я вошёл».</li></ol>`;
+  } else if (s.state === 'CONNECTING') {
+    acts = B('confirm', 'Я вошёл', 'primary') + B('open', 'Открыть Chrome');
+    extra = '<p class="small muted" style="margin:10px 0 0">Окно Chrome открыто. Войдите в Instagram и нажмите «Я вошёл».</p>';
+  } else if (s.state === 'WAITING_USER') {
+    acts = B('open', 'Открыть Chrome');
+    extra = `<div class="attn" style="margin-top:12px"><b>⚠ Instagram запросил подтверждение</b><span>${esc(s.message || '')}. Выполните его в окне Chrome — завод сам такие проверки не проходит.</span><div>${B('confirm', 'Продолжить', 'primary')}</div></div>`;
+  } else {
+    acts = (s.state === 'PUBLISHING' || s.state === 'STOPPING' ? B('stop', s.state === 'STOPPING' ? 'Останавливаю…' : '⏹ Остановить', 'danger') : B('confirm', 'Проверить вход'))
+      + (s.chrome_open ? B('close', 'Закрыть Chrome') : B('open', 'Открыть Chrome')) + (s.state === 'PUBLISHING' ? '' : B('disconnect', 'Отключить', 'danger'));
+    if (s.state === 'PUBLISHING') extra = '<div class="drybox" style="margin-top:10px">Идёт публикация — не трогайте окно Chrome, пока не появится «опубликовано».</div>';
+  }
+  if (s.message && s.state !== 'WAITING_USER' && s.state !== 'CONNECTING') extra += `<div class="${s.state === 'ERROR' || s.state === 'DISCONNECTED' ? 'errbox' : 'drybox'}" style="margin-top:10px">${esc(s.message)}</div>`;
+  $('#acts').innerHTML = acts; $('#extra').innerHTML = extra;
+  $$('#acts [data-a], #extra [data-a]').forEach(b => b.onclick = () => {
+    const a = b.dataset.a;
+    if (a === 'disconnect' && !confirm('Отключить Instagram? Профиль Chrome с входом будет удалён с этого Mac (сам аккаунт не меняется).')) return;
+    if (a === 'stop') return act('stop', 'Остановлю после текущего безопасного шага');
+    act(a, { connect: 'Открываю Chrome…', confirm: 'Проверяю вход…', open: 'Открываю Chrome…' }[a]);
+  });
+}
+async function load() { try { if (!busy) render(await api('/api/instagram-web/status')); } catch { } loadQueue(); loadPick(); }
+
+// ---------- queue ----------
+const QST = { queued: ['🟡 В очереди', 'warn'], publishing: ['🔵 Публикуется', 'info'], published: ['✅ Опубликовано', 'ok'],
+  failed: ['🔴 Ошибка', 'err'], paused: ['⏸ Пауза', ''] };
+let QTAB = 'active', QD = null;
+const when = iso => iso ? new Date(iso).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+const inMin = iso => { if (!iso) return '—'; const m = Math.round((new Date(iso) - Date.now()) / 60000); return m <= 0 ? 'сейчас' : m < 60 ? `через ${m} мин` : `через ${Math.floor(m / 60)} ч ${m % 60} мин`; };
+async function qact(method, path, ok) {
+  try { await api('/api/instagram-web/' + path, { method }); if (ok) toast(ok, 'ok'); loadQueue(true); } catch (e) { toast(e.message, 'err'); }
+}
+function confirmPublish(it, go) {
+  const bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.style.zIndex = 30;
+  bg.innerHTML = `<div class="modal" style="display:block;max-width:520px;padding:22px 24px"><h2>Опубликовать в Instagram сейчас?</h2>
+    <p class="small" style="margin:10px 0 4px"><b>${esc(it.video || '')}</b>${it.account && it.account !== 'default' ? ' → @' + esc(it.account) : ''}</p>
+    <div class="row" style="align-items:flex-start;gap:12px;margin-top:8px"><div style="text-align:center"><div class="small muted">Обложка</div>
+      ${it.cover_url ? `<img src="${it.cover_url}" alt="" style="width:72px;aspect-ratio:9/16;object-fit:cover;border-radius:8px;margin-top:4px">` : '<span class="badge" style="margin-top:4px">кадр Instagram</span>'}</div>
+      <div style="flex:1"><div class="small muted">Описание</div><div class="quote" style="margin-top:4px">${esc(it.caption || '— без описания —')}</div></div></div>
+    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" data-x>Отмена</button><button class="btn primary" id="pubGo">Опубликовать</button></div></div>`;
+  document.body.append(bg);
+  $('[data-x]', bg).onclick = () => bg.remove();
+  $('#pubGo', bg).onclick = () => { bg.remove(); go(); };
+}
+async function loadAutofill() {
+  try {
+    const p = await api('/api/instagram-web/autofill/progress');
+    const rows = Object.entries(p.accounts);
+    $('#afBox').hidden = !rows.length;
+    $('#afRows').innerHTML = rows.map(([a, x]) => `<div class="row small" style="justify-content:space-between;padding:6px 10px;border:1px solid var(--line);border-radius:10px">
+      <b>@${esc(a)}</b><span>смонтировано ${x.rendered}/${x.total} · опубликовано ${x.published}/${x.total}${x.errors ? ` · <span style="color:var(--err)">ошибок ${x.errors}</span>` : ''}</span></div>`).join('');
+    $('#afStop').hidden = !p.active;
+  } catch { }
+}
+$('#afStop').onclick = async () => { if (!confirm('Остановить автозалив? Несмонтированные ролики не пойдут, очередь встанет на паузу.')) return; try { await api('/api/instagram-web/autofill/stop', { method: 'POST' }); toast('Автозалив остановлен', 'ok'); loadAutofill(); loadQueue(true); } catch (e) { toast(e.message, 'err'); } };
+async function loadQueue(force) {
+  loadAutofill();
+  let d; try { d = await api('/api/instagram-web/queue'); } catch { return; }
+  d.publishing = IG_STATUS && IG_STATUS.publishing;
+  const key = JSON.stringify(d); if (!force && key === QD) return; QD = key;
+  const t = d.today;
+  $('#tiles').innerHTML = `<div class="tile ok"><div class="v">${t.published}</div><div class="l">опубликовано сегодня (${t.limit ? 'лимит ' + t.limit : 'без лимита'})</div></div>
+    <div class="tile ${t.failed ? 'warn' : ''}"><div class="v">${t.failed}</div><div class="l">ошибок сегодня</div></div>
+    <div class="tile accent"><div class="v">${t.queued}</div><div class="l">в очереди</div></div>
+    <div class="tile"><div class="v" style="font-size:18px">${d.paused ? 'пауза' : inMin(t.next_at)}</div><div class="l">следующая публикация${t.next_at && !d.paused ? ' · ' + when(t.next_at) : ''}</div></div>`;
+  $('#qpause').textContent = d.paused ? '▶ Продолжить очередь' : '⏸ Пауза очереди';
+  $('#qpause').onclick = () => qact('POST', d.paused ? 'resume' : 'pause', d.paused ? 'Очередь продолжена' : 'Очередь на паузе');
+  const tabs = { active: ['Активные', i => ['queued', 'publishing', 'paused', 'failed'].includes(i.status)], published: ['Опубликованные', i => i.status === 'published'] };
+  $('#qtabs').innerHTML = Object.entries(tabs).map(([k, [n, f]]) => `<button class="chip ${k === QTAB ? 'on' : ''}" data-qt="${k}">${n}<span class="n">${d.items.filter(f).length}</span></button>`).join('');
+  $$('[data-qt]').forEach(b => b.onclick = () => { QTAB = b.dataset.qt; loadQueue(true); });
+  const rows = d.items.filter(tabs[QTAB][1]);
+  $('#qinfo').textContent = '';
+  $('#q').innerHTML = rows.map(i => {
+    const [st, k] = QST[i.status] || [i.status, ''];
+    const acts = [];
+    if (['queued', 'failed', 'paused'].includes(i.status) && !d.publishing) acts.push(`<button class="btn sm primary" data-q="publish:${i.id}">Опубликовать сейчас</button>`);
+    if (['queued', 'paused', 'failed'].includes(i.status)) acts.push(`<button class="btn sm" data-q="edit:${i.id}">✏️ Описание</button>`);
+    if (i.status === 'queued') acts.push(`<button class="btn sm" data-q="pause:${i.id}">Пауза</button>`);
+    if (i.status === 'paused') acts.push(`<button class="btn sm" data-q="resume:${i.id}">Продолжить</button>`);
+    if (i.status === 'failed') acts.push(`<button class="btn sm primary" data-q="retry:${i.id}">Повторить</button>`);
+    if (['queued', 'paused', 'failed'].includes(i.status)) acts.push(`<button class="btn sm ghost danger" data-q="del:${i.id}" title="Снять с публикации">✕ Убрать</button>`);
+    return `<div class="qrow"><img src="${i.thumbnail}" alt="" loading="lazy">
+      <div><div class="row" style="gap:8px"><span class="badge ${k} st-b">${st}</span><b class="small">${esc(i.video || i.title || '#' + i.content_id)}</b>${i.account && i.account !== 'default' ? `<span class="badge">@${esc(i.account)}</span>` : ''}${i.cover ? `<a href="${i.cover_url}" target="_blank" title="обложка"><img src="${i.cover_url}" alt="" style="width:22px;height:39px;object-fit:cover;border-radius:3px;vertical-align:middle"></a>` : '<span class="badge" title="у ролика нет выбранного фона">обложка: кадр Instagram</span>'}</div>
+        <div class="cap" style="margin-top:6px">${esc(i.caption || '— без описания —')}</div>
+        <div class="meta">${i.status === 'published' ? 'опубликовано ' + when(i.published_at) + (i.permalink ? ` · <a href="${esc(i.permalink)}" target="_blank" rel="noopener">открыть</a>` : '')
+          : i.eta ? 'публикация ' + when(i.eta) + ' (' + inMin(i.eta) + ')' : i.status === 'paused' ? 'на паузе' : '—'}${i.scheduled_at ? ' · не раньше ' + when(i.scheduled_at) : ''}${i.attempts ? ' · попыток: ' + i.attempts : ''}</div>
+        ${i.error ? `<div class="errbox">${esc(i.error_code || '')} ${esc(i.error)}</div>` : ''}</div>
+      <div class="acts">${acts.join('')}</div></div>`;
+  }).join('') || `<div class="card empty"><b>${QTAB === 'active' ? 'Очередь пуста' : 'Пока ничего не опубликовано'}</b>${QTAB === 'active' ? 'В «Готовых» откройте ролик и нажмите «＋ В Instagram» или отметьте несколько и «Добавить выбранные в Instagram».' : ''}</div>`;
+  $$('[data-q]').forEach(b => b.onclick = () => {
+    const [a, id] = b.dataset.q.split(':');
+    if (a === 'del' && !confirm('Убрать ролик из очереди Instagram?')) return;
+    if (a === 'del') qact('DELETE', 'queue/' + id, 'Убран из очереди');
+    else if (a === 'retry') qact('POST', 'retry/' + id, 'Поставлен на повтор');
+    else if (a === 'edit') { const it = d.items.find(x => x.id === +id); igEditCaption(+id, it.caption, () => loadQueue(true)); }
+    else if (a === 'publish') { const it = d.items.find(x => x.id === +id); confirmPublish(it, () => qact('POST', 'publish/' + id, 'Публикую… следите за окном Chrome')); }
+    else qact('POST', `queue/${id}/${a}`);
+  });
+}
+$('#autoOn').onchange = async () => { try { render(await api('/api/instagram-web/autopost', { method: 'POST', body: JSON.stringify({ on: $('#autoOn').checked }) })); toast($('#autoOn').checked ? 'Автопостинг включён' : 'Автопостинг выключен', 'ok'); loadQueue(true); } catch (e) { toast(e.message, 'err'); } };
+$('#pubAll').onclick = async () => {
+  const [ready, q, st, rec] = await Promise.all([api('/api/ready'), api('/api/instagram-web/queue'), api('/api/instagram-web/status'), api('/api/publishing/descriptions?limit=1').catch(() => ({ descriptions: [] }))]);
+  const queued = new Set(q.items.map(i => i.content_id));
+  const todo = ready.items.filter(i => !i.posted_at && !queued.has(i.id));
+  if (!todo.length) return toast('В «Готовых» нет новых роликов: всё уже в очереди или опубликовано');
+  const cur = st.account && st.account.username, accs = (st.accounts || []).filter(a => !a.excluded);
+  const bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.style.zIndex = 30;
+  bg.innerHTML = `<div class="modal" style="display:block;max-width:560px;padding:22px 24px"><h2>Опубликовать все из «Готовых»: ${todo.length}</h2>
+    <div style="display:flex;gap:5px;overflow-x:auto;margin:10px 0">${todo.map(i => `<img src="/api/instagram-web/cover-preview/${i.id}" onerror="this.src='${i.thumbnail}'" style="width:40px;aspect-ratio:9/16;object-fit:cover;border-radius:5px;flex:none">`).join('')}</div>
+    <label class="field">Аккаунт<select id="paAcc">${(accs.length ? accs : [{ username: cur }]).map(a => `<option value="${esc(a.username)}" ${a.username === cur ? 'selected' : ''}>@${esc(a.username)}</option>`).join('')}</select></label>
+    <label class="field" style="margin-top:10px">Описание для всех<textarea id="paCap" style="min-height:90px">${esc((rec.descriptions || [])[0] || '')}</textarea></label>
+    <label class="row small" style="gap:6px;margin-top:6px"><input type="checkbox" id="paOwn" checked> если у ролика есть своё описание — взять его</label>
+    <p class="small muted" style="margin:8px 0 0">Обложки — фоны роликов. Порядок — как в «Готовых». Публикация по одному: интервал ${st.settings.interval_minutes} мин, с ${st.settings.window_start} до ${st.settings.window_end}, не больше ${st.settings.max_posts_per_day} в день, лишнее — на следующий день.</p>
+    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" data-x>Отмена</button><button class="btn primary" id="paGo">Запустить</button></div></div>`;
+  document.body.append(bg);
+  $('[data-x]', bg).onclick = () => bg.remove();
+  $('#paGo', bg).onclick = async () => {
+    $('#paGo', bg).disabled = true;
+    try { const r = await api('/api/instagram-web/publish-all', { method: 'POST', body: JSON.stringify({ account: $('#paAcc', bg).value, caption: $('#paCap', bg).value, use_own: $('#paOwn', bg).checked }) });
+      bg.remove(); render(r.status); loadQueue(true);
+      toast(`В очереди: ${r.added.length}. Автопостинг включён${r.last_eta ? ', последний примерно ' + when(r.last_eta) : ''}`, 'ok'); }
+    catch (e) { toast(e.message, 'err'); $('#paGo', bg).disabled = false; }
+  };
+};
+// ---------- pick videos by checkboxes ----------
+let PK = [], PKSEL = [], PKKEY = null, PKLAST = null;
+async function loadPick() {
+  let ready, q; try { [ready, q] = await Promise.all([api('/api/ready'), api('/api/instagram-web/queue')]); } catch { return; }
+  const queued = new Set(q.items.filter(i => i.status !== 'cancelled').map(i => i.content_id));
+  PK = ready.items.filter(i => !i.posted_at && !queued.has(i.id));
+  PKSEL = PKSEL.filter(id => PK.some(i => i.id === id));
+  const key = PK.map(i => i.id).join(); if (key !== PKKEY) { PKKEY = key;
+    $('#pick').innerHTML = PK.map(i => `<div class="pk" data-id="${i.id}"><input type="checkbox" class="ck"><img loading="lazy" src="/api/instagram-web/cover-preview/${i.id}" onerror="this.onerror=null;this.src='${i.thumbnail}'" alt=""><div class="t">${esc(i.title || '#' + i.id)}</div></div>`).join('')
+      || '<p class="small muted" style="grid-column:1/-1">Новых роликов в «Готовых» нет: всё уже в очереди или опубликовано.</p>'; }
+  markPick();
+}
+function markPick() {
+  $$('.pk').forEach(c => { const n = PKSEL.indexOf(+c.dataset.id); c.classList.toggle('sel', n >= 0); $('.ck', c).checked = n >= 0;
+    let b = $('.no', c); if (n >= 0) { if (!b) { b = document.createElement('span'); b.className = 'no'; c.append(b); } b.textContent = n + 1; } else if (b) b.remove(); });
+  $('#pkN').textContent = PKSEL.length ? 'Выбрано: ' + PKSEL.length : '';
+  $('#pkGo').disabled = !PKSEL.length; $('#pkGo').textContent = `📸 Опубликовать выбранные${PKSEL.length ? ` (${PKSEL.length})` : ''}`;
+}
+$('#pick').addEventListener('click', e => {
+  const c = e.target.closest('.pk'); if (!c) return;
+  const ids = PK.map(i => i.id), id = +c.dataset.id, on = !PKSEL.includes(id);
+  const set = x => { if (on && !PKSEL.includes(x)) PKSEL.push(x); if (!on) PKSEL = PKSEL.filter(y => y !== x); };
+  if (e.shiftKey && PKLAST != null) { const [a, b] = [ids.indexOf(PKLAST), ids.indexOf(id)].sort((x, y) => x - y); ids.slice(a, b + 1).forEach(set); } else set(id);
+  PKLAST = id; markPick();
+});
+$('#pkAll').onclick = () => { PK.forEach(i => { if (!PKSEL.includes(i.id)) PKSEL.push(i.id); }); markPick(); };
+$('#pkNone').onclick = () => { PKSEL = []; markPick(); };
+function fillPickAccounts(s) {
+  const cur = s.account && s.account.username, accs = (s.accounts || []).filter(a => !a.excluded);
+  const list = accs.length ? accs.map(a => a.username) : (cur ? [cur] : []);
+  const key = list.join() + '|' + cur; if ($('#pkAcc').dataset.k === key) return; $('#pkAcc').dataset.k = key;
+  const keep = $('#pkAcc').value;
+  $('#pkAcc').innerHTML = list.map(u => `<option value="${esc(u)}">@${esc(u)}</option>`).join('') || '<option value="">текущий аккаунт</option>';
+  $('#pkAcc').value = list.includes(keep) ? keep : (list.includes(cur) ? cur : list[0] || '');
+}
+api('/api/publishing/descriptions?limit=8').then(r => { $('#pkCaps').innerHTML = (r.descriptions || []).map(d => `<option value="${esc(d)}">`).join(''); }).catch(() => { });
+$('#pkGo').onclick = async () => {
+  const n = PKSEL.length, acc = $('#pkAcc').value;
+  if (!n || !confirm(`Поставить ${n} ${plural(n, 'ролик', 'ролика', 'роликов')} в очередь${acc ? ' на @' + acc : ''}? Они опубликуются подряд, автопостинг включится.`)) return;
+  $('#pkGo').disabled = true;
+  try { const r = await api('/api/instagram-web/publish-all', { method: 'POST', body: JSON.stringify({ ids: PKSEL, account: acc || null, caption: $('#pkCap').value, use_own: false }) });
+    PKSEL = []; render(r.status); loadQueue(true); loadPick();
+    toast(`В очереди: ${r.added.length}${Object.keys(r.errors || {}).length ? `, не получилось: ${Object.keys(r.errors).length}` : ''}. Автопостинг включён`, 'ok'); }
+  catch (e) { toast(e.message, 'err'); markPick(); }
+};
+$('#accRefresh').onclick = async () => { const b = $('#accRefresh'); b.disabled = true; try { render(await api('/api/instagram-web/accounts/refresh', { method: 'POST' })); toast('Список аккаунтов обновлён', 'ok'); } catch (e) { toast(e.message, 'err'); } finally { b.disabled = false; } };
+$('#setSave').onclick = async () => {
+  try { render(await api('/api/instagram-web/settings', { method: 'PUT', body: JSON.stringify({ max_posts_per_day: +$('#setLimit').value, interval_minutes: +$('#setInt').value, window_start: $('#setFrom').value, window_end: $('#setTo').value }) })); toast('Сохранено', 'ok'); loadQueue(true); }
+  catch (e) { toast(e.message, 'err'); }
+};
+renderSidebar('instagram');
+api('/api/instagram-web/enabled').then(r => {
+  $('#off').hidden = r.enabled; $('#on').hidden = !r.enabled;
+  if (r.enabled) { load(); setInterval(load, 4000); }
+});
+</script>
+</body>
+</html>

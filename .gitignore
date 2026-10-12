@@ -1,0 +1,27 @@
+.env
+.venv/
+/data/
+/logs/
+*.db
+/database/
+credentials/
+tokens/
+__pycache__/
+*.pyc
+.pytest_cache/
+.factory.lock
+.DS_Store
+Готовые/
+models/
+Reels/
+browser_profiles/
+# личные настройки: копия config/config.example.yaml, создаётся при первом запуске
+config/config.yaml
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.gguf
+*.onnx
+Фоны/
+*.zip

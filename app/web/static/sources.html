@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Источники — Контент-завод</title>
+<link rel="stylesheet" href="/static/app.css?v=14">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Источники</h1>
+        <p class="sub">Добавьте Telegram-каналы — завод сам будет забирать из них новые видео.</p>
+      </div>
+      <button class="btn primary" id="checkAll">↻ Парсить сейчас</button> <a class="btn" href="/calendar">🗓 Календарь</a>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+
+    <div class="stack">
+      <section class="card add-card">
+        <h2>Добавить каналы</h2>
+        <p class="hint" style="margin:4px 0 12px">Вставьте одну или сразу много ссылок — через пробел, запятую или с новой строки:
+          <code>t.me/канал</code>, <code>t.me/s/канал</code> или <code>@канал</code>.</p>
+        <textarea id="links" placeholder="https://t.me/min2ru&#10;@Twitch_NewsRu&#10;t.me/s/lovecooking_daily"></textarea>
+        <div class="add-controls">
+          <label class="field">Категория канала (подсказка нейросети)<select id="cat"></select></label>
+          <label class="field">Что делать с видео
+            <select id="mode"><option value="import">Скачивать и разбирать</option><option value="discovery">Только сохранять ссылки</option></select>
+          </label>
+          <span class="spacer"></span>
+          <button class="btn primary lg" id="add">＋ Добавить</button>
+        </div>
+        <p class="hint">Читается только открытая веб-версия канала, без входа в аккаунт. Большие видео Telegram в веб-версии не отдаёт — они будут в «пропущено», пока не подключён Telegram API (ниже).</p>
+      </section>
+
+      <section class="card" id="tgApi"></section>
+
+      <section class="card" id="mine" hidden>
+        <div class="row"><h2>Мои каналы из Telegram</h2><span class="small muted" id="mineN"></span><span class="spacer"></span>
+          <input type="search" id="mineQ" placeholder="Поиск по названию…" style="min-width:200px">
+          <button class="btn sm" id="mineRefresh">↻ Обновить список</button></div>
+        <p class="hint" style="margin:6px 0 10px">Каналы и группы, на которые подписан ваш аккаунт. Отметьте галочкой, откуда брать видео: они будут парситься через Telegram API (большие видео тоже) по календарю, новые посты. В аккаунте ничего не меняется — только чтение.</p>
+        <div class="row" style="margin-bottom:8px"><button class="btn ghost sm" id="mineAll">отметить все найденные</button><button class="btn ghost sm" id="mineNone">снять все найденные</button>
+          <label class="row small" style="gap:6px"><input type="checkbox" id="mineOnly"> только отмеченные</label></div>
+        <div class="mine-list" id="mineList"></div>
+        <div class="row" style="margin-top:8px"><span class="spacer"></span><button class="btn sm danger" id="mineDel">🗑 Удалить найденные из завода</button></div>
+      </section>
+
+      <section>
+        <div class="row" style="margin:6px 0 12px"><h2 id="chTitle">Каналы</h2><span class="spacer"></span>
+          <input type="search" id="filter" placeholder="Найти канал…" style="min-width:220px"></div>
+        <div class="channels" id="channels"></div>
+      </section>
+
+      <details class="card" id="hiddenBox" hidden><summary style="cursor:pointer;font-weight:650">Удалённые каналы <span class="muted small" id="hiddenN"></span></summary>
+        <p class="hint">Эти каналы не парсятся и не показываются, даже после «Обновить список». В Telegram вы на них по-прежнему подписаны.</p>
+        <div class="stack" id="hiddenList" style="gap:6px"></div></details>
+    </div>
+  </main>
+</div>
+<style>
+  .mine-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px; max-height: 460px; overflow: auto; }
+  .mine { display: flex; gap: 10px; align-items: center; padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; background: var(--surface); }
+  .mine.on { border-color: var(--accent); background: var(--accent-2); }
+  .mine input { width: 18px; height: 18px; flex: none; }
+  .mine .av { width: 34px; height: 34px; border-radius: 50%; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; overflow: hidden; }
+  .mine .av img { width: 100%; height: 100%; object-fit: cover; }
+  .mine .t { min-width: 0; flex: 1; } .mine .t b { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mine .t span { font-size: 11px; color: var(--muted); }
+</style>
+<script src="/static/app.js?v=20"></script>
+<script>
+const STATE = { new: ['новый', ''], queued: ['в очереди', 'info'], scanning: ['сканирую…', 'warn'], ok: ['в работе', 'ok'], error: ['ошибка', 'err'] };
+const AVA = ['#6366f1', '#0ea5e9', '#f59e0b', '#10b981', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
+const avaColor = s => AVA[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % AVA.length];
+
+function tiles(sum) {
+  const t = (v, l, k = '') => `<div class="tile ${k}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  $('#tiles').innerHTML = t(sum.channels, 'каналов', 'accent') + t(sum.in_work, 'в работе') +
+    t(sum.ready, 'готово', 'ok') + t(sum.rejected, 'отсеяно');
+}
+
+function cardHTML(c) {
+  return `
+    <div class="ch-head">
+      <div class="avatar" style="background:${avaColor(c.username)}">${esc((c.title || c.username).trim()[0] || '?').toUpperCase()}</div>
+      <div style="min-width:0;flex:1">
+        <a class="ch-title" data-k="title" target="_blank" rel="noopener"></a>
+        <div class="ch-user" data-k="user"></div>
+      </div>
+      <span data-k="state"></span>
+    </div>
+    <div class="ch-stats">
+      <div><b data-k="found"></b><span>найдено</span></div>
+      <div><b data-k="downloaded"></b><span>скачано</span></div>
+      <div><b data-k="ready"></b><span>готово</span></div>
+      <div data-k="skipwrap"><b data-k="skipped"></b><span>пропущено</span></div>
+    </div>
+    <div class="ch-error" data-k="err" hidden></div>
+    <div class="ch-controls">
+      <select data-f="category" title="Категория канала — подсказка нейросети">${catOptions(c.category)}</select>
+      <select data-f="mode"><option value="import">Скачивать</option><option value="discovery">Только ссылки</option></select>
+      <select data-f="via" title="Как читать канал"><option value="web">Веб-версия</option><option value="api" ${TG.state === 'ok' ? '' : 'disabled'}>Telegram API</option></select>
+    </div>
+    <div class="ch-meta"><span data-k="ago"></span>
+      <div class="ch-actions">
+        <button class="btn sm" data-act="check">↻ Проверить</button>
+        <button class="btn sm" data-act="toggle"></button>
+        <button class="btn sm ghost danger" data-act="del" title="Удалить канал из завода">🗑</button>
+      </div>
+    </div>`;
+}
+
+async function load() {
+  const [d, sum] = await Promise.all([api('/api/channels'), api('/api/summary')]);
+  tiles(sum);
+  const box = $('#channels');
+  const f = $('#filter').value.trim().toLowerCase();
+  // channels from the account show up here once ticked; unticked ones live only in «Мои каналы»
+  d.channels = d.channels.filter(c => c.added_by !== 'account' || c.enabled);
+  const list = d.channels.filter(c => !f || (c.username + ' ' + (c.title || '')).toLowerCase().includes(f));
+  $('#chTitle').textContent = d.channels.length ? `Каналы · ${d.channels.length}` : 'Каналы';
+  if (!d.channels.length) {
+    box.innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">📡</div><b>Пока ни одного канала</b>Вставьте ссылки в поле выше и нажмите «Добавить» — проверка начнётся сразу.</div>`;
+    return;
+  }
+  box.querySelector('.empty')?.remove();
+  const seen = new Set();
+  list.forEach((c, i) => {
+    seen.add(String(c.id));
+    let el = box.querySelector(`[data-id="${c.id}"]`);
+    if (!el) { el = document.createElement('article'); el.className = 'card channel'; el.dataset.id = c.id; el.innerHTML = cardHTML(c); }
+    if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+    const k = n => el.querySelector(`[data-k="${n}"]`);
+    el.classList.toggle('off', !c.enabled);
+    const title = k('title'); title.href = c.url; title.textContent = c.title || '@' + c.username;
+    k('user').textContent = /^id\d+$/.test(c.username) ? 'закрытый канал' : '@' + c.username;
+    const [stText, stKind] = c.enabled ? (STATE[c.state] || [c.state, '']) : ['выключен', ''];
+    k('state').innerHTML = `<span class="badge ${stKind}">${stText}</span>`;
+    for (const n of ['found', 'downloaded', 'ready', 'skipped']) k(n).textContent = c[n];
+    k('skipwrap').title = c.last_skipped.length ? 'Последние пропуски:\n' + c.last_skipped.join('\n') : 'Пропусков нет';
+    const err = k('err'); err.hidden = !c.last_error; err.textContent = c.last_error || '';
+    k('ago').textContent = 'Проверен: ' + ago(c.last_checked_at);
+    for (const n of ['category', 'mode', 'via']) { const s = el.querySelector(`select[data-f="${n}"]`); if (document.activeElement !== s && s.value !== c[n]) s.value = c[n]; }
+    const chk = el.querySelector('[data-act="check"]'); chk.disabled = !c.enabled || c.state === 'queued' || c.state === 'scanning';
+    const tg = el.querySelector('[data-act="toggle"]'); tg.dataset.on = c.enabled; tg.textContent = c.enabled ? 'Пауза' : 'Включить';
+    el.dataset.name = c.username;
+  });
+  $$('[data-id]', box).forEach(el => { if (!seen.has(el.dataset.id)) el.remove(); });
+  if (!list.length) box.insertAdjacentHTML('beforeend', `<div class="card empty" style="grid-column:1/-1"><b>Ничего не нашлось</b>Нет каналов, похожих на «${esc(f)}».</div>`);
+}
+
+$('#add').onclick = async () => {
+  const b = $('#add'); const links = $('#links').value;
+  if (!links.trim()) { toast('Вставьте хотя бы одну ссылку на канал', 'err'); $('#links').focus(); return; }
+  b.disabled = true;
+  try {
+    const r = await api('/api/channels', { method: 'POST', body: JSON.stringify({ links, category: $('#cat').value, mode: $('#mode').value }) });
+    if (r.restored && r.restored.length) toast(`Возвращены удалённые раньше: ${r.restored.map(x => '@' + x).join(', ')}`, 'ok');
+    toast(r.added ? `Добавлено ${r.added} ${plural(r.added, 'канал', 'канала', 'каналов')}${r.already_there ? `, ${r.already_there} уже были` : ''}. Проверка запущена.` : 'Эти каналы уже есть — запустил их проверку.', 'ok');
+    $('#links').value = ''; load();
+  } catch (e) { toast(e.message, 'err'); } finally { b.disabled = false; }
+};
+$('#links').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#add').click(); });
+$('#checkAll').onclick = async () => { const r = await api('/api/channels/check-all', { method: 'POST' }); toast(r.queued ? `Поставил в очередь: ${r.queued}` : 'Все каналы уже проверяются', 'ok'); load(); };
+$('#filter').oninput = load;
+$('#channels').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const card = b.closest('[data-id]'); const id = card.dataset.id;
+  try {
+    if (b.dataset.act === 'check') { await api(`/api/channels/${id}/check`, { method: 'POST' }); toast(`Проверяю @${card.dataset.name}`); }
+    if (b.dataset.act === 'toggle') { const on = b.dataset.on !== 'true'; await api(`/api/channels/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled: on }) }); toast(on ? 'Канал включён' : 'Канал на паузе'); }
+    if (b.dataset.act === 'del') {
+      if (!confirm(DEL_TEXT(1))) return;
+      const r = await api(`/api/channels/${id}`, { method: 'DELETE' }); toast(delToast(r)); loadHidden(); if (typeof loadMine === 'function' && MINE.length) loadMine();
+    }
+    load();
+  } catch (err) { toast(err.message, 'err'); }
+});
+$('#channels').addEventListener('change', async e => {
+  const s = e.target.closest('select[data-f]'); if (!s) return;
+  const id = s.closest('[data-id]').dataset.id;
+  try { await api(`/api/channels/${id}`, { method: 'PATCH', body: JSON.stringify({ [s.dataset.f]: s.value }) }); s.blur(); toast('Сохранено', 'ok'); load(); }
+  catch (err) { toast(err.message, 'err'); }
+});
+
+// ---------- Telegram API (optional) ----------
+let TG = { state: 'no_keys' };
+// ---------- «Мои каналы» ----------
+let MINE = [];
+const fmtN = n => n == null ? '' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' млн' : n >= 1e3 ? Math.round(n / 1e3) + ' тыс' : String(n);
+function mineShown() {
+  const q = $('#mineQ').value.trim().toLowerCase(), only = $('#mineOnly').checked;
+  return MINE.filter(c => (!only || c.enabled) && (!q || (c.title + ' ' + c.username).toLowerCase().includes(q)));
+}
+function renderMine() {
+  const list = mineShown();
+  $('#mineN').textContent = MINE.length ? `${MINE.length} · отмечено ${MINE.filter(c => c.enabled).length}` : '';
+  $('#mineList').innerHTML = list.map(c => `<label class="mine ${c.enabled ? 'on' : ''}" data-mid="${c.id}">
+      <input type="checkbox" ${c.enabled ? 'checked' : ''}>
+      <span class="av" style="background:${avaColor(c.username)}">${esc((c.title || '?')[0].toUpperCase())}<img loading="lazy" src="${c.avatar}" alt="" onerror="this.remove()"></span>
+      <span class="t"><b>${esc(c.title)}</b><span>${c.public ? '@' + esc(c.username) : 'закрытый'}${c.members ? ' · ' + fmtN(c.members) + ' подписчиков' : ''}</span></span>
+      <button type="button" class="btn ghost sm danger" data-mdel="${c.id}" title="Удалить из завода">🗑</button></label>`).join('')
+    || `<p class="small muted">${MINE.length ? 'Ничего не нашлось.' : 'Нажмите «Обновить список», чтобы загрузить каналы аккаунта.'}</p>`;
+}
+async function loadMine(refresh = false) {
+  try {
+    const r = refresh ? await api('/api/telegram-api/channels/refresh', { method: 'POST' }) : await api('/api/telegram-api/channels');
+    MINE = r.channels; renderMine();
+    if (refresh) toast(`Каналов в аккаунте: ${r.found}${r.added ? `, новых: ${r.added}` : ''}`, 'ok');
+    else if (!MINE.length && TG.state === 'ok') loadMine(true);
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function selectMine(ids, enabled) {
+  if (!ids.length) return;
+  try { MINE = (await api('/api/telegram-api/channels/select', { method: 'POST', body: JSON.stringify({ ids, enabled }) })).channels; renderMine(); load(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+const DEL_TEXT = n => `Удалить ${n === 1 ? 'канал' : n + ' ' + plural(n, 'канал', 'канала', 'каналов')} из завода?\nОн больше не будет парситься и не появится в списках. Его ещё не использованные видео удалятся с диска; смонтированные и готовые останутся. В Telegram ничего не изменится.`;
+const delToast = r => `Удалено из завода${r.channels ? ': ' + r.channels : ''}. Убрано видео: ${r.items}${r.freed ? ', освобождено ' + (r.freed / 2 ** 20).toFixed(0) + ' МБ' : ''}`;
+async function delChannels(ids) {
+  if (!ids.length || !confirm(DEL_TEXT(ids.length))) return;
+  try { const r = await api('/api/channels/delete-many', { method: 'POST', body: JSON.stringify({ ids }) }); toast(delToast(r), 'ok'); loadMine(); load(); loadHidden(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+async function loadHidden() {
+  const h = (await api('/api/channels/hidden')).channels;
+  $('#hiddenBox').hidden = !h.length; $('#hiddenN').textContent = h.length ? `· ${h.length}` : '';
+  $('#hiddenList').innerHTML = h.map(c => `<div class="row" style="justify-content:space-between"><span class="small"><b>${esc(c.title)}</b> <span class="muted">${/^id\d+$/.test(c.username) ? 'закрытый' : '@' + esc(c.username)}</span></span><button class="btn sm" data-restore="${c.id}">Вернуть</button></div>`).join('');
+  $$('[data-restore]').forEach(b => b.onclick = async () => { await api(`/api/channels/${b.dataset.restore}/restore`, { method: 'POST' }); toast('Канал возвращён', 'ok'); loadHidden(); load(); if (MINE.length) loadMine(); });
+}
+$('#mineList').addEventListener('click', e => { const b = e.target.closest('[data-mdel]'); if (!b) return; e.preventDefault(); delChannels([+b.dataset.mdel]); });
+$('#mineDel').onclick = () => delChannels(mineShown().map(c => c.id));
+loadHidden();
+$('#mineList').addEventListener('change', e => { const row = e.target.closest('[data-mid]'); if (row) selectMine([+row.dataset.mid], e.target.checked); });
+$('#mineQ').oninput = renderMine; $('#mineOnly').onchange = renderMine;
+$('#mineRefresh').onclick = () => loadMine(true);
+$('#mineAll').onclick = () => { const ids = mineShown().filter(c => !c.enabled).map(c => c.id); if (ids.length > 20 && !confirm(`Отметить ${ids.length} каналов? Все они будут парситься.`)) return; selectMine(ids, true); };
+$('#mineNone').onclick = () => selectMine(mineShown().filter(c => c.enabled).map(c => c.id), false);
+
+function tgApi() {
+  const mineBox = $('#mine'); if (mineBox) { const show = TG.state === 'ok'; if (show && mineBox.hidden) loadMine(); mineBox.hidden = !show; }
+  const st = TG.state, ok = st === 'ok';
+  const badge = ok ? `<span class="badge ok">${esc(TG.label)}</span>` : st === 'no_keys' ? '<span class="badge">не подключено</span>' : `<span class="badge warn">${esc(TG.label)}</span>`;
+  let body = '';
+  if (st === 'no_keys') body = `
+    <p class="small muted" style="margin:6px 0 10px">Необязательно. С официальным API завод скачивает большие видео, которые веб-версия не отдаёт, и может читать канал целиком через API.
+      Ключи выдаёт <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> → «API development tools». Они запишутся в <code>.env</code> на этом Mac и не будут показаны после сохранения. Не присылайте их в чат.</p>
+    <div class="row"><input type="text" id="tgId" placeholder="api_id" style="width:140px" autocomplete="off">
+      <input type="password" id="tgHash" placeholder="api_hash" style="flex:1;min-width:200px" autocomplete="off">
+      <button class="btn primary" id="tgSaveKeys">Сохранить ключи</button></div>`;
+  else if (st === 'need_login') body = `
+    <p class="small muted" style="margin:6px 0 10px">Ключи сохранены. Войдите своим номером: Telegram пришлёт код в приложение. Сессия хранится только на этом Mac (<code>credentials/</code>, не в git).</p>
+    <div class="row"><input type="text" id="tgPhone" placeholder="+79991234567" style="width:200px" autocomplete="off"><button class="btn primary" id="tgSend">Получить код</button>
+      <button class="btn ghost sm" id="tgNewKeys">Заменить ключи</button></div>`;
+  else if (st === 'code_sent') body = `
+    <p class="small" style="margin:6px 0 4px">Код для ${esc(TG.phone || 'вашего номера')} отправлен <b>${esc(TG.delivery || '')}</b>.</p>
+    <p class="small muted" style="margin:0 0 10px">Не пересылайте код и не отправляйте его ни в какой чат: Telegram сразу делает такой код недействительным. Введите его только здесь.</p>
+    <div class="row"><input type="text" id="tgCode" placeholder="код" style="width:140px" autocomplete="one-time-code"><button class="btn primary" id="tgSignIn">Войти</button>
+      ${TG.next ? `<button class="btn sm" id="tgResend" ${TG.resend_in > 0 ? 'disabled' : ''} title="Telegram отправит код другим способом">Отправить ${esc(TG.next.split(':')[0])}${TG.resend_in > 0 ? ` (через ${TG.resend_in} с)` : ''}</button>` : ''}
+      <button class="btn ghost sm" id="tgRestart">Другой номер</button></div>`;
+  else if (st === 'password') body = `
+    <p class="small muted" style="margin:6px 0 10px">У аккаунта включена двухэтапная проверка. Введите облачный пароль Telegram — он уходит только в Telegram и нигде не сохраняется.</p>
+    <div class="row"><input type="password" id="tgPw" placeholder="облачный пароль" style="width:220px" autocomplete="off"><button class="btn primary" id="tgSignInPw">Войти</button></div>`;
+  else body = `
+    <p class="small muted" style="margin:6px 0 10px">Большие видео из каналов в режиме «Веб-версия» теперь скачиваются через API. Чтобы читать канал целиком через API, выберите у него «Telegram API».</p>
+    <button class="btn sm danger" id="tgLogout">Выйти из Telegram</button>`;
+  $('#tgApi').innerHTML = `<div class="row" style="justify-content:space-between"><h2>Telegram API</h2>${badge}</div>${body}`;
+  const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = async () => { el.disabled = true; try { await fn(); } catch (e) { toast(e.message, 'err'); try { const st = await api('/api/telegram-api'); if (st.state !== TG.state) { TG = st; tgApi(); } } catch {} } finally { el.disabled = false; } }; };
+  const post = (url, body) => api(url, { method: 'POST', body: JSON.stringify(body || {}) });
+  on('tgSaveKeys', async () => { TG = await post('/api/telegram-api/keys', { api_id: $('#tgId').value, api_hash: $('#tgHash').value }); toast('Ключи сохранены в .env', 'ok'); tgApi(); });
+  on('tgSend', async () => { TG = await post('/api/telegram-api/send-code', { phone: $('#tgPhone').value }); toast('Код отправлен в Telegram', 'ok'); tgApi(); });
+  on('tgSignIn', async () => { TG = await post('/api/telegram-api/sign-in', { code: $('#tgCode').value }); toast(TG.state === 'ok' ? 'Telegram API подключён' : TG.label, TG.state === 'ok' ? 'ok' : ''); tgApi(); refreshCards(); });
+  on('tgSignInPw', async () => { TG = await post('/api/telegram-api/sign-in', { password: $('#tgPw').value }); toast(TG.state === 'ok' ? 'Telegram API подключён' : TG.label, 'ok'); tgApi(); refreshCards(); });
+  on('tgResend', async () => { TG = await post('/api/telegram-api/resend'); toast('Код отправлен ' + (TG.delivery || ''), 'ok'); tgApi(); });
+  if (st === 'code_sent' && TG.resend_in > 0) setTimeout(async () => { if (TG.state === 'code_sent') { TG = await api('/api/telegram-api'); tgApi(); } }, Math.min(TG.resend_in, 10) * 1000);
+  on('tgRestart', async () => { TG = { state: 'need_login', label: '' }; tgApi(); });
+  on('tgNewKeys', async () => { TG = { state: 'no_keys', label: '' }; tgApi(); });
+  on('tgLogout', async () => { if (!confirm('Выйти из Telegram API? Каналы вернутся к веб-версии.')) return; TG = await post('/api/telegram-api/logout'); toast('Вышел', 'ok'); tgApi(); refreshCards(); });
+}
+function refreshCards() { $('#channels').innerHTML = ''; load(); }
+api('/api/telegram-api').then(s => { TG = s; tgApi(); if (s.state === 'ok') refreshCards(); }).catch(() => { $('#tgApi').innerHTML = '<h2>Telegram API</h2><p class="small muted">нет связи с сервером</p>'; });
+
+renderSidebar('sources');
+loadCategories().then(() => { $('#cat').innerHTML = catOptions('other'); load(); setInterval(load, 2500); });
+</script>
+</body>
+</html>
